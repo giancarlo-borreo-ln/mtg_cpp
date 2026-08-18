@@ -1,0 +1,16 @@
+# LeakSanitizer suppressions for third-party allocations (Linux only).
+#
+# These leaks are NOT owned by mtg_cpp:
+#   * SFML 2.6 keeps a process-wide FreeType library that is freed during
+#     static destruction, i.e. AFTER LeakSanitizer's exit check runs. Any text
+#     that is measured or drawn (sf::Text::getLocalBounds / draw) allocates
+#     glyphs through FreeType and shows up here.
+#   * The NVIDIA GL driver (libnvidia-glcore) leaks small one-time buffers when
+#     a window is created.
+# Both are one-time and bounded. Allocations with one of these frames in their
+# stack are skipped; every other leak (including anything in our own code) is
+# still reported and fails the build.
+leak:libfreetype
+leak:libnvidia-glcore
+leak:libGLX_nvidia
+leak:libfontconfig

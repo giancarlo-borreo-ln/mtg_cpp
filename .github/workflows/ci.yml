@@ -1,0 +1,66 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+jobs:
+  linux:
+    name: Linux (${{ matrix.compiler }})
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        compiler: [gcc, clang]
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y ninja-build pkg-config \
+            libx11-dev libxrandr-dev libxcursor-dev libxi-dev libxinerama-dev \
+            libxext-dev libgl1-mesa-dev libfreetype-dev libudev-dev \
+            libopenal-dev libvorbis-dev libflac-dev libsndfile1-dev
+          if [ "${{ matrix.compiler }}" = "clang" ]; then
+            sudo apt-get install -y clang clang-tidy clang-format
+          fi
+
+      - name: Configure (ASan/UBSan, compile_commands for tidy)
+        run: cmake -S . -B build -G Ninja -DCMAKE_BUILD_TYPE=Debug \
+            -DMTG_CPP_ENABLE_SANITIZERS=ON -DCMAKE_EXPORT_COMPILE_COMMANDS=ON
+
+      - name: Build
+        run: cmake --build build
+
+      - name: Test
+        run: ctest --test-dir build --output-on-failure
+
+      - name: clang-format check
+        run: |
+          if [ "${{ matrix.compiler }}" = "clang" ]; then
+            clang-format --dry-run --Werror $(find src tests -name '*.cpp')
+          fi
+
+      - name: clang-tidy
+        if: matrix.compiler == 'clang'
+        run: |
+          for source in $(find src tests -name '*.cpp'); do
+            clang-tidy -p build --quiet "$source"
+          done
+
+  windows:
+    name: Windows (MSVC)
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Configure
+        run: cmake -S . -B build -G "Visual Studio 17 2022" -A x64
+
+      - name: Build
+        run: cmake --build build --config Debug
+
+      - name: Test
+        run: ctest --test-dir build -C Debug --output-on-failure

@@ -1,0 +1,4 @@
+---
+# mtg_cpp code style. Based on LLVM (less prescriptive than Google).
+BasedOnStyle: LLVM
+ColumnLimit: 100

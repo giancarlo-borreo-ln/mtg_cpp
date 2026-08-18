@@ -1,0 +1,27 @@
+---
+# mtg_cpp static analysis configuration (clang-tidy).
+#
+# The enabled groups are curated for correctness and memory safety. Everything
+# is promoted to an error so CI fails loudly. HeaderFilterRegex is empty: only
+# diagnostics in the project's own translation units are reported, never in
+# third-party/system headers.
+Checks:
+  - 'clang-analyzer-*'
+  - 'bugprone-*'
+  - 'cppcoreguidelines-*'
+  - 'performance-*'
+  - 'readability-*'
+  - '-bugprone-easily-swappable-parameters'
+  - '-bugprone-implicit-widening-of-multiplication-result'
+  - '-cppcoreguidelines-avoid-magic-numbers'
+  # SFML models events as a union (sf::Event); reading its fields is the only
+  # sanctioned union access in this codebase. Our own types never use unions.
+  - '-cppcoreguidelines-pro-type-union-access'
+  - '-cppcoreguidelines-pro-bounds-pointer-arithmetic'
+  - '-readability-magic-numbers'
+  - '-readability-identifier-length'
+  - '-readability-uppercase-literal-suffix'
+  - '-readability-function-cognitive-complexity'
+WarningsAsErrors: '*'
+HeaderFilterRegex: ''
+FormatStyle: file

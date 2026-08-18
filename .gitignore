@@ -1,0 +1,13 @@
+# --- mtg_cpp ---
+# MTG VTT sandbox, rewritten as a standalone C++20 desktop app.
+
+# Build directories (build, build-asan, build-release, ...)
+build*/
+
+# Runtime/local data (bulk card DB, art cache, user decks)
+data/
+
+# Editor / OS cruft
+.vscode/
+.idea/
+*.user
