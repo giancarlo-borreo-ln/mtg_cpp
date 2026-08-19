@@ -6,6 +6,7 @@
 #include "ui/theme.h"
 
 #include <algorithm>
+#include <array>
 #include <cmath>
 #include <cstdint>
 #include <system_error>
@@ -295,6 +296,59 @@ void paintLifeRing(sf::Image &image) {
       }
     }
   }
+}
+
+void paintAppIcon(sf::Image &image) {
+  // A velvet field with a gold frame and a gold "MTG" monogram — the window and
+  // taskbar icon, painted procedurally like every other texture (M11.2).
+  const TablePalette &palette = tablePalette();
+  const sf::Vector2u size = image.getSize();
+  for (unsigned y = 0; y < size.y; ++y) {
+    for (unsigned x = 0; x < size.x; ++x) {
+      image.setPixel(x, y, palette.velvet);
+    }
+  }
+  constexpr unsigned kFrame = 2;
+  for (unsigned y = 0; y < size.y; ++y) {
+    for (unsigned x = 0; x < size.x; ++x) {
+      if (x < kFrame || y < kFrame || x >= size.x - kFrame || y >= size.y - kFrame) {
+        image.setPixel(x, y, palette.gold);
+      }
+    }
+  }
+  // A 3x5 pixel monogram ("M T G") scaled to fit the field.
+  constexpr std::array<const char *, 5> kGlyphM{"#.#", "###", "#.#", "#.#", "#.#"};
+  constexpr std::array<const char *, 5> kGlyphT{"###", ".#.", ".#.", ".#.", ".#."};
+  constexpr std::array<const char *, 5> kGlyphG{"###", "#..", "#.#", "#.#", "###"};
+  constexpr unsigned kGlyphW = 3;
+  constexpr unsigned kGlyphH = 5;
+  constexpr unsigned kScale = 4;
+  constexpr unsigned kSpacing = 1;
+  const unsigned totalW = ((kGlyphW * 3u) + (kSpacing * 2u)) * kScale;
+  const unsigned totalH = kGlyphH * kScale;
+  const unsigned ox = (size.x - totalW) / 2u;
+  const unsigned oy = (size.y - totalH) / 2u;
+  const auto blit = [&](const std::array<const char *, kGlyphH> &glyph, unsigned colOffset) {
+    for (unsigned gy = 0; gy < kGlyphH; ++gy) {
+      for (unsigned gx = 0; gx < kGlyphW; ++gx) {
+        if (glyph.at(gy)[gx] != '#') {
+          continue;
+        }
+        for (unsigned sy = 0; sy < kScale; ++sy) {
+          for (unsigned sx = 0; sx < kScale; ++sx) {
+            const unsigned px = ox + ((colOffset + gx) * kScale) + sx;
+            const unsigned py = oy + (gy * kScale) + sy;
+            if (px < size.x && py < size.y) {
+              image.setPixel(px, py, palette.gold);
+            }
+          }
+        }
+      }
+    }
+  };
+  blit(kGlyphM, 0);
+  blit(kGlyphT, kGlyphW + kSpacing);
+  blit(kGlyphG, (kGlyphW + kSpacing) * 2);
 }
 
 bool buildTexture(sf::Texture &out, const sf::Image &image) {

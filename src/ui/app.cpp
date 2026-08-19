@@ -100,7 +100,17 @@ const char *screenPlaceholder(Screen screen) {
 
 App::App(std::string version, DeckRepository &decks, const CardDatabase &cards,
          std::filesystem::path dataDir)
-    : decks_(decks), cards_(cards), dataDir_(std::move(dataDir)), version_(std::move(version)) {
+    : decks_(decks), cards_(cards), dataDir_(std::move(dataDir)), version_(std::move(version)),
+      handCursorLoaded_(handCursor_.loadFromSystem(sf::Cursor::Hand)),
+      textCursorLoaded_(textCursor_.loadFromSystem(sf::Cursor::Text)) {
+
+  // The runtime art cache (M10.1): downloads card art on demand into the app
+  // data dir, keyed by scryfall id + size. Disabled here so headless tests and
+  // the integration driver stay fully offline; the real launcher calls
+  // setArtCacheEnabled(true). The table always falls back to procedural art.
+  artCache_ = std::make_unique<ArtCache>(dataDir_ / "art_cache", sf::Vector2u{240u, 335u});
+  artCache_->setEnabled(false);
+  table_.setArtCache(artCache_.get());
 
   // Fonts first: every sf::Text below needs one. A missing font is a warning,
   // never a crash — the window, routing and Esc-to-quit all still work, and
@@ -155,6 +165,45 @@ App::App(std::string version, DeckRepository &decks, const CardDatabase &cards,
   home_.setPlayerId(loadPlayerId(dataDir_));
   refreshDecks();
   switchTo(Screen::Home);
+}
+
+void App::setArtCacheEnabled(bool enabled) { artCache_->setEnabled(enabled); }
+
+CursorKind App::cursorAt(sf::Vector2f point) const {
+  switch (screen_) {
+  case Screen::Home:
+    return home_.cursorAt(point);
+  case Screen::DeckEditor:
+    return deckEditor_.cursorAt(point);
+  case Screen::Lobby:
+    return lobby_.cursorAt(point);
+  case Screen::Table:
+    return table_.cursorAt(point);
+  }
+  return CursorKind::Arrow;
+}
+
+void App::updateCursor(sf::RenderWindow &window, sf::Vector2f point) {
+  const CursorKind wanted = cursorAt(point);
+  if (wanted == appliedCursor_) {
+    return;
+  }
+  appliedCursor_ = wanted;
+  switch (wanted) {
+  case CursorKind::Hand:
+    if (handCursorLoaded_) {
+      window.setMouseCursor(handCursor_);
+    }
+    break;
+  case CursorKind::Text:
+    if (textCursorLoaded_) {
+      window.setMouseCursor(textCursor_);
+    }
+    break;
+  case CursorKind::Arrow:
+    window.setMouseCursor(sf::Cursor());
+    break;
+  }
 }
 
 std::string App::windowTitle() const { return "mtg_cpp " + version_ + " - " + screenName(screen_); }
@@ -782,6 +831,8 @@ void App::pumpTable() {
   table_.setRevealRequest(session.reveal().pending_request_from);
   table_.setRevealResult(session.reveal().reveal_accepted, session.reveal().revealed_hand);
   table_.setError(session.lastError());
+  // Drain finished art downloads and build any newly-arrived card textures.
+  table_.pumpArt();
 }
 
 void App::onTableAction(TableAction action) {
@@ -834,6 +885,10 @@ void App::draw(sf::RenderWindow &window) {
   // full-window and rebuilt at the current size, and the menu chrome is
   // skipped (the table draws its own toolbar).
   window.clear(menuPalette().background);
+
+  // Pointer shape follows the active screen's hover state (M10.3).
+  const sf::Vector2i mouse = sf::Mouse::getPosition(window);
+  updateCursor(window, {static_cast<float>(mouse.x), static_cast<float>(mouse.y)});
 
   if (screen_ == Screen::Table) {
     if (playmatSize_ != windowSize_) {
@@ -897,6 +952,13 @@ void App::run() {
   // react to presses, not to the OS auto-repeat).
   sf::RenderWindow window(sf::VideoMode({windowSize_.x, windowSize_.y}), windowTitle());
   window.setKeyRepeatEnabled(false);
+
+  // App icon (M11.2): a procedural velvet/gold "MTG" monogram — no binary
+  // asset to ship. Sets the window + taskbar icon.
+  sf::Image icon;
+  icon.create(64u, 64u);
+  paintAppIcon(icon);
+  window.setIcon(icon.getSize().x, icon.getSize().y, icon.getPixelsPtr());
 
   // Event loop: poll every pending event, react, then render exactly one frame.
   while (window.isOpen()) {

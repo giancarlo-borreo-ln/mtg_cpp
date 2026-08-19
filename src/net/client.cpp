@@ -1,6 +1,9 @@
 // Client implementation (M6.5).
 #include "net/client.h"
 
+#include "net/envelope.h"
+#include "net/server.h"
+
 namespace mtgcpp::net {
 
 bool Client::connect(std::string_view host, std::string_view port) {
@@ -27,6 +30,8 @@ bool Client::connect(std::string_view host, std::string_view port) {
 
 void Client::disconnect() {
   if (thread_.joinable()) {
+    // Intentional: no `connection_lost` marker is synthesized for this close.
+    closingIntentionally_ = true;
     asio::post(ioContext_, [this] {
       asio::error_code ignored;
       socket_.shutdown(asio::ip::tcp::socket::shutdown_both, ignored);
@@ -62,9 +67,13 @@ void Client::doRead() {
 
 void Client::onRead(const asio::error_code &ec, std::size_t bytesRead) {
   if (ec) {
-    // Peer closed or connection errored: mark disconnected and let the io
-    // thread drain (no further reads are scheduled).
+    // Peer closed or connection errored. If this was NOT an intentional
+    // disconnect, tell the owner the host/relay is gone (M10.2 host-shutdown
+    // fan-out) so the session can clean up instead of hanging on a stale room.
     connected_.store(false);
+    if (!closingIntentionally_) {
+      inbound_.push(serializeEnvelope(connectionLostEvent(std::string(Server::kDefaultRoom))));
+    }
     return;
   }
   decoder_.push(std::string_view(readBuffer_.data(), bytesRead));

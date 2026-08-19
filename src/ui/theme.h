@@ -119,6 +119,10 @@ void paintTokenCard(sf::Image &image);
 // ring annulus with a burgundy inner disc (M9.5 life totals).
 void paintLifeRing(sf::Image &image);
 
+// Paint the app icon (M11.2): a velvet field with a gold frame and a gold "MTG"
+// monogram, so the window/taskbar icon is procedural like everything else.
+void paintAppIcon(sf::Image &image);
+
 // --- Texture uploads (need an OpenGL context; return false on failure) ------
 
 // Upload an image to a texture (the only step that needs a GL context).

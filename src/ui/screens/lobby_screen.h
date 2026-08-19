@@ -17,6 +17,7 @@
 
 #include "core/board.h"
 #include "core/card.h"
+#include "ui/cursor.h"
 #include "ui/widgets/button.h"
 #include "ui/widgets/text_input.h"
 
@@ -101,6 +102,10 @@ public:
   LobbyAction pollAction();
 
   void draw(sf::RenderTarget &target, const sf::Font &font, const sf::Font &boldFont) const;
+
+  // The pointer over `point`: Text over the join-address field, Hand over the
+  // buttons / deck picker rows.
+  CursorKind cursorAt(sf::Vector2f point) const;
 
   // Exposed for tests: the connect-panel widgets.
   const Button &createButton() const { return createButton_; }

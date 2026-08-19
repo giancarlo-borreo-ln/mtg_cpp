@@ -229,5 +229,27 @@ TEST(MenuPalette, TextColorsStayDistinctFromTheBackground) {
   EXPECT_NE(palette.danger, palette.background);
 }
 
+TEST(App, CursorDelegatesToTheActiveScreen) {
+  TempDir dir;
+  DeckRepository repository(dir.path());
+  CardDatabase cards;
+  App app("test", repository, cards, dir.path());
+
+  // Home starts in the profile picker: Hand over a profile card, Arrow over
+  // the chrome.
+  const sf::FloatRect first = app.home().profileButton(0).bounds();
+  EXPECT_GT(first.width, 0.f);
+  EXPECT_EQ(app.cursorAt({first.left + (first.width / 2.f), first.top + (first.height / 2.f)}),
+            CursorKind::Hand);
+  EXPECT_EQ(app.cursorAt({5.f, 5.f}), CursorKind::Arrow);
+
+  // The Deck Editor prefers a Text caret over its search field.
+  app.switchTo(Screen::DeckEditor);
+  const sf::FloatRect search = app.deckEditor().searchInput().bounds();
+  EXPECT_GT(search.width, 0.f);
+  EXPECT_EQ(app.cursorAt({search.left + (search.width / 2.f), search.top + (search.height / 2.f)}),
+            CursorKind::Text);
+}
+
 } // namespace
 } // namespace mtgcpp::core

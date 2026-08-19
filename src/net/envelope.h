@@ -46,6 +46,9 @@ inline constexpr std::string_view kHandRevealDeny = "hand_reveal_deny";
 inline constexpr std::string_view kHandRevealResult = "hand_reveal_result";
 inline constexpr std::string_view kBoardUpdate = "board_update";
 inline constexpr std::string_view kDeckSelected = "deck_selected";
+// Local-only (never on the relay): the client's socket failed, so the peer /
+// relay is gone. Synthesized by the client and consumed by the session.
+inline constexpr std::string_view kConnectionLost = "connection_lost";
 } // namespace WSEvents
 
 // Error codes carried in an `error` event's payload, mirroring `WSErrorCodes`.
@@ -82,6 +85,25 @@ WsEnvelope playerLeftEvent(std::string_view room, std::string_view playerId,
                            const std::vector<std::string> &players);
 WsEnvelope readyEvent(std::string_view room, const std::vector<std::string> &players);
 WsEnvelope errorEvent(std::string_view room, std::string_view code, std::string_view message);
+// Synthesized by the client when the connection drops unexpectedly (the host /
+// relay died); lets the session clean up instead of hanging on a stale room.
+WsEnvelope connectionLostEvent(std::string_view room);
+
+// ---------------------------------------------------------------------------
+// Non-throwing payload readers (M10.2 wire hardening)
+// ---------------------------------------------------------------------------
+// nlohmann's `.value()`/`.at().get<>()` throw on a type mismatch, and inbound
+// payloads are untrusted — a malformed frame must be rejected or ignored, never
+// allowed to crash the app. These readers return nullopt when `key` is missing
+// or has the wrong type, and never throw.
+std::optional<std::string> readPayloadString(const nlohmann::json &payload, std::string_view key);
+std::optional<bool> readPayloadBool(const nlohmann::json &payload, std::string_view key);
+std::optional<std::vector<std::string>> readPayloadStringArray(const nlohmann::json &payload,
+                                                               std::string_view key);
+// A sub-object or array payload value (validated by the consumer).
+std::optional<nlohmann::json> readPayloadObject(const nlohmann::json &payload,
+                                                std::string_view key);
+std::optional<nlohmann::json> readPayloadArray(const nlohmann::json &payload, std::string_view key);
 
 // ---------------------------------------------------------------------------
 // Length-prefixed framing

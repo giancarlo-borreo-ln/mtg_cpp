@@ -59,6 +59,23 @@ LobbyScreen::LobbyScreen() {
 
 void LobbyScreen::setConnected(bool connected) { connected_ = connected; }
 
+CursorKind LobbyScreen::cursorAt(sf::Vector2f point) const {
+  // The join-address field is editable text; everything else clickable.
+  if (joinInput_.contains(point)) {
+    return CursorKind::Text;
+  }
+  if (createButton_.contains(point) || joinButton_.contains(point) ||
+      leaveButton_.contains(point)) {
+    return CursorKind::Hand;
+  }
+  for (const Button &button : deckButtons_) {
+    if (button.contains(point)) {
+      return CursorKind::Hand;
+    }
+  }
+  return CursorKind::Arrow;
+}
+
 void LobbyScreen::setConnecting(bool connecting) {
   connecting_ = connecting;
   createButton_.setEnabled(!connecting);

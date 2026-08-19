@@ -240,7 +240,7 @@ TEST(TwoPeerIntegration, AThirdConnectionIsRejectedWithRoomFull) {
   server.stop();
 }
 
-TEST(TwoPeerIntegration, InvalidJsonGetsAnErrorAndTheConnectionSurvives) {
+TEST(TwoPeerIntegration, MalformedJsonGetsAnErrorThenTheConnectionIsDropped) {
   AsioTransport transport(0);
   Server server(transport);
   server.start();
@@ -254,12 +254,12 @@ TEST(TwoPeerIntegration, InvalidJsonGetsAnErrorAndTheConnectionSurvives) {
   ASSERT_TRUE(waitUntil([&] { return !events(host, WSEvents::kError).empty(); }, server, clients));
   EXPECT_EQ(events(host, WSEvents::kError).at(0).payload.at("code").get<std::string>(),
             WSErrorCodes::kInvalidMessage);
-  EXPECT_TRUE(host.client.connected());
+  // M10.2 wire hardening: the malformed frame drops the connection.
+  EXPECT_FALSE(host.client.connected());
 
-  // The connection still works afterwards.
-  ASSERT_TRUE(host.client.sendEnvelope(makeEnvelope("ping", "player_1", {{"n", 1}})));
-  ASSERT_TRUE(waitUntil([&] { return !events(host, "ping").empty(); }, server, clients));
-  EXPECT_EQ(events(host, "ping").at(0).from, "player_1");
+  // The seat is freed once the drop surfaces as a disconnect.
+  ASSERT_TRUE(waitUntil([&] { return server.playerCount() == 0u; }, server, clients));
+  EXPECT_EQ(server.playerCount(), 0u);
 
   host.client.disconnect();
   server.stop();

@@ -161,7 +161,7 @@ TEST(Server, SenderReceivesItsOwnBroadcastEcho) {
   EXPECT_EQ(echoed.at(0).payload.at("id").get<std::string>(), "c1");
 }
 
-TEST(Server, InvalidJsonGetsAnErrorAndTheConnectionSurvives) {
+TEST(Server, MalformedFrameGetsAnErrorThenDropsTheConnection) {
   FakeTransport transport;
   Server server(transport);
   server.start();
@@ -172,13 +172,20 @@ TEST(Server, InvalidJsonGetsAnErrorAndTheConnectionSurvives) {
   const std::vector<WsEnvelope> errors = transport.eventsTo(1, WSEvents::kError);
   ASSERT_EQ(errors.size(), 1u);
   EXPECT_EQ(errors.at(0).payload.at("code").get<std::string>(), WSErrorCodes::kInvalidMessage);
-  EXPECT_TRUE(transport.closed().empty());
-  EXPECT_EQ(server.playerCount(), 1u);
+  // M10.2 wire hardening: a malformed frame is dropped, never kept.
+  EXPECT_EQ(transport.closed(), std::vector<std::size_t>{1});
 
-  // A minimal envelope still parses as invalid (missing fields).
-  transport.simulateFrame(1, "{}");
+  // The socket close surfaces as a disconnect, freeing the seat.
+  transport.simulateDisconnect(1);
   server.runOnce();
-  EXPECT_EQ(transport.eventsTo(1, WSEvents::kError).size(), 2u);
+  EXPECT_EQ(server.playerCount(), 0u);
+
+  // A structurally-invalid envelope (missing required fields) is dropped too.
+  join(server, transport, 2);
+  transport.simulateFrame(2, "{}");
+  server.runOnce();
+  EXPECT_EQ(transport.eventsTo(2, WSEvents::kError).size(), 1u);
+  EXPECT_EQ(transport.closed(), (std::vector<std::size_t>{1, 2}));
 }
 
 TEST(Server, RoomMismatchGetsAnError) {

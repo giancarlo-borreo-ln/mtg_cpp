@@ -16,6 +16,7 @@
 
 #include "core/board.h"
 #include "state/board_state.h"
+#include "ui/cursor.h"
 #include "ui/widgets/button.h"
 #include "ui/widgets/card_view.h"
 #include "ui/widgets/context_menu.h"
@@ -32,9 +33,12 @@
 #include <cstddef>
 #include <optional>
 #include <string>
+#include <unordered_map>
 #include <vector>
 
 namespace mtgcpp::core {
+
+class ArtCache; // fwd: attached via setArtCache (owned by the App)
 
 // What the user just did on the Table. CardCommand carries a fully-built
 // state::BoardAction (tap/counter/token/flip/move/life) that the App applies
@@ -80,6 +84,24 @@ public:
 
   // --- Layout ---------------------------------------------------------------
   void relayout(const sf::FloatRect &content, float scale);
+
+  // --- Cursor (M10.3 polish) ------------------------------------------------
+  // The pointer over `point`: Hand over anything clickable (your cards, the
+  // life rings, the toolbar/menu/reveal buttons), Arrow elsewhere. Pure.
+  CursorKind cursorAt(sf::Vector2f point) const;
+
+  // --- Art cache (M10.1) ----------------------------------------------------
+  // Attach the runtime art cache (nullptr = always procedural). The screen
+  // requests art for every face-up card on relayout, drains completed downloads
+  // and builds per-card textures in pumpArt(), and falls back to the procedural
+  // front texture whenever art is missing / still downloading / offline.
+  void setArtCache(ArtCache *cache);
+  // Drain the cache and build textures for cards whose art just arrived. Called
+  // once per frame by the App (main thread, needs a GL context).
+  void pumpArt();
+  // The cached art texture for a face-up card, or nullptr (procedural front).
+  // Read-only; exposed so tests can assert the fallback path.
+  const sf::Texture *artTextureFor(const BoardCard &card) const;
 
   // --- Interaction ----------------------------------------------------------
   bool routeEvent(const sf::Event &event);
@@ -148,6 +170,10 @@ private:
   void cancelLifeEdit();
   // Right-click handling (opens the command menu on a card).
   bool mousePressedRight(sf::Vector2f point);
+  // Face-up cards whose art should be requested/rendered (my hand + both
+  // halves' zones; tokens, face-down and id-less cards excluded).
+  std::vector<const BoardCard *> artCards() const;
+  static bool cardUsesArt(const BoardCard &card);
   // --- Rendering helpers (windowed) ------------------------------------------
   void drawHand(sf::RenderTarget &target, const sf::Font &font, PlayerSeat seat) const;
   void drawZones(sf::RenderTarget &target, const sf::Font &font, PlayerSeat seat) const;
@@ -195,6 +221,11 @@ private:
   sf::Texture tileTex_;
   sf::Texture ringTex_;
   sf::Vector2u textureSize_{0u, 0u};
+
+  // Art cache (M10.1): not owned. Per-card art textures keyed by scryfall id,
+  // built on the main thread from cache images (procedural fallback otherwise).
+  ArtCache *artCache_ = nullptr;
+  std::unordered_map<std::string, sf::Texture> artTextures_;
 
   // Widgets.
   Button leaveButton_;

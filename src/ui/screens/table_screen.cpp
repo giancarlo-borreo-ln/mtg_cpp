@@ -1,6 +1,7 @@
 // Table screen implementation (M9.4 + M9.5): the Shandalar battlefield.
 #include "ui/screens/table_screen.h"
 
+#include "ui/art_cache.h"
 #include "ui/layout.h"
 #include "ui/theme.h"
 
@@ -85,6 +86,91 @@ void TableScreen::setRevealResult(std::optional<bool> accepted, std::vector<Reve
 }
 
 void TableScreen::setError(std::optional<std::string> error) { error_ = std::move(error); }
+
+CursorKind TableScreen::cursorAt(sf::Vector2f point) const {
+  // The open command menu is fully clickable.
+  if (menuOpen_ && menu_.contains(point)) {
+    return CursorKind::Hand;
+  }
+  // Toolbar / reveal-prompt / revealed-panel buttons (only when shown).
+  if (leaveButton_.contains(point) || revealButton_.contains(point) ||
+      (revealRequestFrom_.has_value() &&
+       (acceptButton_.contains(point) || denyButton_.contains(point) ||
+        dismissButton_.contains(point))) ||
+      (revealAccepted_.has_value() && closeRevealedButton_.contains(point))) {
+    return CursorKind::Hand;
+  }
+  // Life rings at the corners are clickable (both seats).
+  for (const PlayerSeat seat : {PlayerSeat::Host, PlayerSeat::Guest}) {
+    if (life_rings_.at(seatIndex(seat)).contains(point)) {
+      return CursorKind::Hand;
+    }
+  }
+  // Your own interactive cards (hand + zones; the stack and the opponent's half
+  // are read-only).
+  const std::optional<CardSelection> hit = cardAt(point);
+  if (hit.has_value() && hit->seat == mySeat() && !hit->in_stack) {
+    return CursorKind::Hand;
+  }
+  return CursorKind::Arrow;
+}
+
+void TableScreen::setArtCache(ArtCache *cache) { artCache_ = cache; }
+
+bool TableScreen::cardUsesArt(const BoardCard &card) {
+  return !card.is_token && !card.flipped && !card.scryfall_id.empty() && !card.image_url.empty();
+}
+
+std::vector<const BoardCard *> TableScreen::artCards() const {
+  std::vector<const BoardCard *> cards;
+  const PlayerSeat mine = mySeat();
+  for (const BoardCard &card : board_.seats.at(seatIndex(mine)).hand) {
+    if (cardUsesArt(card)) {
+      cards.push_back(&card);
+    }
+  }
+  for (const PlayerSeat seat : {PlayerSeat::Host, PlayerSeat::Guest}) {
+    for (const PlayerZone zone : kPlayerZones) {
+      for (const BoardCard &card : board_.seats.at(seatIndex(seat)).zones.at(zoneIndex(zone))) {
+        if (cardUsesArt(card)) {
+          cards.push_back(&card);
+        }
+      }
+    }
+  }
+  return cards;
+}
+
+void TableScreen::pumpArt() {
+  if (artCache_ == nullptr) {
+    return;
+  }
+  artCache_->pump();
+  // Build a texture for any face-up card whose art has arrived; cards still in
+  // flight / offline keep the procedural fallback (never drawn twice).
+  for (const BoardCard *card : artCards()) {
+    if (artTextures_.contains(card->scryfall_id)) {
+      continue;
+    }
+    const std::optional<sf::Image> image = artCache_->imageFor(card->scryfall_id);
+    if (!image.has_value()) {
+      continue;
+    }
+    sf::Texture texture;
+    if (buildTexture(texture, image.value())) {
+      artTextures_.emplace(card->scryfall_id, std::move(texture));
+    }
+  }
+}
+
+const sf::Texture *TableScreen::artTextureFor(const BoardCard &card) const {
+  if (!cardUsesArt(card)) {
+    return nullptr; // tokens / face-down / no printing — procedural texture
+  }
+  const std::unordered_map<std::string, sf::Texture>::const_iterator it =
+      artTextures_.find(card.scryfall_id);
+  return it == artTextures_.end() ? nullptr : &it->second;
+}
 
 std::vector<RevealCard> TableScreen::revealCards() const {
   return toRevealCards(board_.seats.at(seatIndex(mySeat())).hand);
@@ -187,6 +273,15 @@ void TableScreen::relayout(const sf::FloatRect &content, float scale) {
       {revealedPanelRect_.left + revealedPanelRect_.width - (90.f * scale) - (kPad * scale),
        revealedPanelRect_.top + (kPad * scale)});
   closeRevealedButton_.setSize({90.f * scale, buttonHeight});
+
+  // On-demand art (M10.1): enqueue a download for every face-up card. Cheap and
+  // idempotent (coalesced per id, disk/memory hits skipped); relayout runs on
+  // table entry and resize, so this is at most once per visit.
+  if (artCache_ != nullptr) {
+    for (const BoardCard *card : artCards()) {
+      artCache_->request(card->scryfall_id, card->image_url);
+    }
+  }
 }
 
 const std::vector<BoardCard> &TableScreen::pileFor(PlayerSeat seat, bool in_hand,
@@ -776,7 +871,7 @@ void TableScreen::drawHand(sf::RenderTarget &target, const sf::Font &font, Playe
       view.setCard(hand.at(i));
       view.setPosition({rects.at(i).left, rects.at(i).top});
       view.setSize({rects.at(i).width, rects.at(i).height});
-      view.draw(target, font, frontTex_, backTex_, tokenTex_);
+      view.draw(target, font, frontTex_, backTex_, tokenTex_, artTextureFor(hand.at(i)));
     } else {
       drawFace(target, rects.at(i), backTex_);
     }
@@ -800,7 +895,7 @@ void TableScreen::drawZones(sf::RenderTarget &target, const sf::Font &font, Play
       card.setCard(cards.at(i));
       card.setPosition({slot.card_rects.at(i).left, slot.card_rects.at(i).top});
       card.setSize({slot.card_rects.at(i).width, slot.card_rects.at(i).height});
-      card.draw(target, font, frontTex_, backTex_, tokenTex_);
+      card.draw(target, font, frontTex_, backTex_, tokenTex_, artTextureFor(cards.at(i)));
     }
   }
 }

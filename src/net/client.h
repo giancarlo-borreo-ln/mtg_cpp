@@ -78,6 +78,10 @@ private:
   std::deque<std::string> pending_;
   std::string frame_;
   bool writing_ = false;
+  // Set before an intentional close so the read error does not synthesize a
+  // `connection_lost` frame. Atomic: written by disconnect() (any thread) and
+  // read by the io thread inside onRead, so TSan sees a synchronized flag.
+  std::atomic<bool> closingIntentionally_ = false;
   MessageQueue<std::string> inbound_{64};
   std::atomic<bool> connected_ = false;
 };

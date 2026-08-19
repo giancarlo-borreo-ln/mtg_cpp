@@ -110,6 +110,20 @@ TEST(PaintLifeRing, TransparentOutsideGoldRingVelvetDisc) {
   EXPECT_GT(ring.r, tablePalette().velvet.r);
 }
 
+TEST(PaintAppIcon, GoldFrameMonogramOnVelvet) {
+  sf::Image image;
+  image.create(64u, 64u);
+  paintAppIcon(image);
+  // The outer frame is gold; the field and the monogram are on velvet.
+  EXPECT_EQ(at(image, 0u, 0u), tablePalette().gold);
+  // A monogram pixel — the stem of the "T" (glyph scaled 4x, centered) — is
+  // gold, while a gap beside the glyphs stays velvet.
+  EXPECT_EQ(at(image, 32u, 30u), tablePalette().gold);
+  EXPECT_EQ(at(image, 58u, 32u), tablePalette().velvet);
+  // The frame corners never bleed into the field.
+  EXPECT_EQ(at(image, 6u, 6u), tablePalette().velvet);
+}
+
 // Texture uploads (need a GL context; present in the test environment) ------
 
 TEST(BuildTexture, UploadsAnImage) {

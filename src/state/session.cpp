@@ -16,6 +16,11 @@ namespace mtgcpp::state {
 
 using mtgcpp::core::playerSeatFromString;
 using mtgcpp::core::playerSeatToString;
+using mtgcpp::net::readPayloadArray;
+using mtgcpp::net::readPayloadBool;
+using mtgcpp::net::readPayloadObject;
+using mtgcpp::net::readPayloadString;
+using mtgcpp::net::readPayloadStringArray;
 using mtgcpp::net::WsEnvelope;
 
 namespace {
@@ -38,10 +43,13 @@ std::vector<RevealCard> revealCardsFromJson(const nlohmann::json &value) {
   }
   cards.reserve(value.size());
   for (const nlohmann::json &entry : value) {
+    if (!entry.is_object()) {
+      continue; // malformed entry: skip, never crash
+    }
     RevealCard card;
-    card.id = entry.value("id", "");
-    card.name = entry.value("name", "");
-    card.image_url = entry.value("image_url", "");
+    card.id = readPayloadString(entry, "id").value_or("");
+    card.name = readPayloadString(entry, "name").value_or("");
+    card.image_url = readPayloadString(entry, "image_url").value_or("");
     cards.push_back(std::move(card));
   }
   return cards;
@@ -122,9 +130,18 @@ void Session::leave() {
 void Session::handleEnvelope(const WsEnvelope &envelope) {
   using namespace mtgcpp::net;
   if (envelope.event == WSEvents::kJoined) {
-    player_id_ = envelope.payload.value("player_id", "");
-    role_ = playerSeatFromString(envelope.payload.value("role", ""));
-    players_ = envelope.payload.value("players", std::vector<std::string>{});
+    // The three identity fields are required: a malformed join is ignored in
+    // full rather than applied with defaults (never trust the wire).
+    const std::optional<std::string> id = readPayloadString(envelope.payload, "player_id");
+    const std::optional<std::string> roleText = readPayloadString(envelope.payload, "role");
+    const std::optional<std::vector<std::string>> players =
+        readPayloadStringArray(envelope.payload, "players");
+    if (!id.has_value() || !roleText.has_value() || !players.has_value()) {
+      return;
+    }
+    player_id_ = id.value();
+    role_ = playerSeatFromString(roleText.value());
+    players_ = players.value();
     status_ = players_.size() >= 2 ? RoomStatus::Ready : RoomStatus::Waiting;
     // A deck chosen before the join landed (role unknown) is minted now that
     // the seat is known; announcing after a join also covers late choices.
@@ -135,27 +152,51 @@ void Session::handleEnvelope(const WsEnvelope &envelope) {
     return;
   }
   if (envelope.event == WSEvents::kPlayerJoined) {
-    players_ = envelope.payload.value("players", std::vector<std::string>{});
+    if (const std::optional<std::vector<std::string>> players =
+            readPayloadStringArray(envelope.payload, "players");
+        players.has_value()) {
+      players_ = players.value();
+    }
     announceDeckIfNeeded();
     return;
   }
   if (envelope.event == WSEvents::kReady) {
-    players_ = envelope.payload.value("players", std::vector<std::string>{});
-    status_ = RoomStatus::Ready;
+    if (const std::optional<std::vector<std::string>> players =
+            readPayloadStringArray(envelope.payload, "players");
+        players.has_value()) {
+      players_ = players.value();
+      status_ = RoomStatus::Ready;
+    }
     announceDeckIfNeeded();
     return;
   }
   if (envelope.event == WSEvents::kPlayerLeft) {
-    players_ = envelope.payload.value("players", std::vector<std::string>{});
-    status_ = RoomStatus::Waiting;
+    if (const std::optional<std::vector<std::string>> players =
+            readPayloadStringArray(envelope.payload, "players");
+        players.has_value()) {
+      players_ = players.value();
+      status_ = RoomStatus::Waiting;
+    }
     return;
   }
   if (envelope.event == WSEvents::kDeckSelected) {
-    if (envelope.payload.contains("seat") && envelope.payload.contains("deck")) {
-      const std::optional<PlayerSeat> seat =
-          playerSeatFromString(envelope.payload.at("seat").get<std::string>());
+    // Untrusted deck payload: every field is validated before use, and a
+    // malformed one is ignored (never applied, never crashes).
+    const bool alreadyKnown = their_deck_.has_value();
+    const std::optional<std::string> seatText = readPayloadString(envelope.payload, "seat");
+    const std::optional<nlohmann::json> deckJson = readPayloadObject(envelope.payload, "deck");
+    if (seatText.has_value() && deckJson.has_value() && deckJson->is_object() &&
+        (!deckJson->contains("cards") || deckJson->at("cards").is_array())) {
+      const std::optional<PlayerSeat> seat = playerSeatFromString(seatText.value());
       if (seat.has_value()) {
-        their_deck_ = mtgcpp::core::deckFromJson(envelope.payload.at("deck"));
+        if (alreadyKnown) {
+          // Redundant re-announce (a join/ready echo of a deck we already
+          // learned): re-minting the opponent's seat would wipe their played
+          // battlefield (un-tap a tapped card), so the match can drift. Decks
+          // are immutable for the match — ignore it.
+          return;
+        }
+        their_deck_ = mtgcpp::core::deckFromJson(deckJson.value());
         board_ = applyAction(board_, setOpponentDeck(seat.value(), their_deck_.value()));
         announceDeckIfNeeded();
       }
@@ -171,17 +212,29 @@ void Session::handleEnvelope(const WsEnvelope &envelope) {
     return;
   }
   if (envelope.event == WSEvents::kHandRevealRequest) {
-    reveal_.pending_request_from = envelope.payload.value("from", "");
+    reveal_.pending_request_from = readPayloadString(envelope.payload, "from");
     return;
   }
   if (envelope.event == WSEvents::kHandRevealResult) {
-    reveal_.reveal_accepted = envelope.payload.value("accepted", false);
-    reveal_.revealed_hand =
-        revealCardsFromJson(envelope.payload.value("cards", nlohmann::json::array()));
+    reveal_.reveal_accepted = readPayloadBool(envelope.payload, "accepted");
+    reveal_.revealed_hand = revealCardsFromJson(
+        readPayloadArray(envelope.payload, "cards").value_or(nlohmann::json::array()));
     return;
   }
   if (envelope.event == WSEvents::kError) {
-    error_ = envelope.payload.value("message", "Server error");
+    error_ = readPayloadString(envelope.payload, "message").value_or("Server error");
+    return;
+  }
+  if (envelope.event == WSEvents::kConnectionLost) {
+    // The host/relay is gone: the room is dead. Drop back to Idle and surface
+    // the reason so the lobby/table can show it (host-shutdown fan-out).
+    player_id_.reset();
+    role_.reset();
+    players_.clear();
+    their_deck_.reset();
+    reveal_ = RevealState{};
+    status_ = RoomStatus::Idle;
+    error_ = "Host disconnected";
     return;
   }
 }

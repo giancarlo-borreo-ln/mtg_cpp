@@ -54,9 +54,12 @@ public:
 
   // --- Rendering ------------------------------------------------------------
   // Paints the card into the slot. `front`/`back`/`token` are the procedural
-  // table textures (owned by the table screen); `font` draws the overlays.
+  // table textures (owned by the table screen); `art` is the cached per-card
+  // art texture (M10.1) or nullptr to keep the procedural front; `font` draws
+  // the overlays.
   void draw(sf::RenderTarget &target, const sf::Font &font, const sf::Texture &front,
-            const sf::Texture &back, const sf::Texture &token) const;
+            const sf::Texture &back, const sf::Texture &token,
+            const sf::Texture *art = nullptr) const;
 
 private:
   BoardCard card_;

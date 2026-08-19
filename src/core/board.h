@@ -58,6 +58,7 @@ inline constexpr std::string_view kStackDropListId{"stack"};
 // A single card instance on the battlefield (one per physical copy).
 struct BoardCard {
   std::string id;
+  std::string scryfall_id; // art-cache key (empty for tokens)
   std::string source_key;
   std::string name;
   std::string image_url;

@@ -88,6 +88,7 @@ std::vector<BoardCard> expandInstances(const std::vector<Card> &cards, PlayerSea
     for (int i = 0; i < copies; ++i) {
       instances.push_back(BoardCard{
           .id = prefix_str + "-" + std::to_string(++n),
+          .scryfall_id = card.scryfall_id,
           .source_key = cardKey(card),
           .name = card.name,
           .image_url = cardImage(card),

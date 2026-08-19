@@ -37,6 +37,12 @@ jobs:
       - name: Test
         run: ctest --test-dir build --output-on-failure
 
+      - name: Fuzz (fixed time budget)
+        # Structure-aware fuzz of the deck parser + envelope/framing: clang uses
+        # libFuzzer, gcc uses the bundled driver main — same invocation, same
+        # budget. Any crash/UB fails the step.
+        run: bash scripts/fuzz.sh 20
+
       - name: clang-format check
         run: |
           if [ "${{ matrix.compiler }}" = "clang" ]; then
@@ -49,6 +55,32 @@ jobs:
           for source in $(find src tests -name '*.cpp'); do
             clang-tidy -p build --quiet "$source"
           done
+
+  tsan:
+    name: Linux (TSan)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y ninja-build pkg-config \
+            libx11-dev libxrandr-dev libxcursor-dev libxi-dev libxinerama-dev \
+            libxext-dev libgl1-mesa-dev libfreetype-dev libudev-dev \
+            libopenal-dev libvorbis-dev libflac-dev libsndfile1-dev
+
+      - name: Configure (TSan)
+        run: cmake -S . -B build -G Ninja -DCMAKE_BUILD_TYPE=Debug \
+            -DMTG_CPP_ENABLE_TSAN=ON
+
+      - name: Build
+        run: cmake --build build
+
+      - name: Test
+        # TSan needs a low ASLR entropy (mmap_rnd_bits <= 28) on newer kernels;
+        # setarch -R disables ASLR per-process as a portable workaround.
+        run: setarch $(uname -m) -R ctest --test-dir build --output-on-failure
 
   windows:
     name: Windows (MSVC)

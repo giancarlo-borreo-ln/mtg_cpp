@@ -27,16 +27,20 @@ std::string CardView::badgeText() const {
 }
 
 void CardView::draw(sf::RenderTarget &target, const sf::Font &font, const sf::Texture &front,
-                    const sf::Texture &back, const sf::Texture &token) const {
+                    const sf::Texture &back, const sf::Texture &token,
+                    const sf::Texture *art) const {
   if (size_.x <= 0.f || size_.y <= 0.f) {
     return;
   }
-  // The face texture: token placeholders and face-down cards swap the front.
+  // The face texture: token placeholders and face-down cards swap the front;
+  // a face-up card with cached art uses the real texture, procedural otherwise.
   const sf::Texture *face = &front;
   if (showsToken()) {
     face = &token;
   } else if (showsBack()) {
     face = &back;
+  } else if (art != nullptr) {
+    face = art;
   }
   if (face->getSize().x == 0u || face->getSize().y == 0u) {
     return; // texture failed to build — nothing to paint

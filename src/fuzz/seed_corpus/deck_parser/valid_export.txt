@@ -1,0 +1,10 @@
+Deck
+4 Forest (WAR) 263
+4 Lightning Bolt (STA) 42
+2 Grizzly Bears (ANB) 16
+
+Sideboard
+2 Negate (M21) 57
+
+Commander
+1 Niv-Mizzet, Parun (GRN) 192

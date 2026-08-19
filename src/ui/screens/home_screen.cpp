@@ -54,6 +54,25 @@ void HomeScreen::setPlayerId(std::optional<std::string> playerId) {
   pendingAction_ = HomeAction::None;
 }
 
+CursorKind HomeScreen::cursorAt(sf::Vector2f point) const {
+  if (playerId_.has_value()) {
+    // Vault view: the deck list (rows + per-row Delete) and the action buttons.
+    if (deckList_.contains(point) || playButton_.contains(point) ||
+        newDeckButton_.contains(point) || editButton_.contains(point) ||
+        switchButton_.contains(point)) {
+      return CursorKind::Hand;
+    }
+  } else {
+    // Profile picker: one card per fixed profile.
+    for (const Button &button : profileButtons_) {
+      if (button.contains(point)) {
+        return CursorKind::Hand;
+      }
+    }
+  }
+  return CursorKind::Arrow;
+}
+
 void HomeScreen::setDecks(std::vector<DeckSummary> decks) {
   deleteIndex_.reset();
   deckList_.setDecks(std::move(decks));

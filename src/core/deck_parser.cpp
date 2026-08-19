@@ -39,6 +39,12 @@ const std::regex &sectionHeaderRe() {
 // Arena prints a `N cards` summary line under each section — never a real card.
 constexpr std::array<std::string_view, 2> kSummaryNames{"card", "cards"};
 
+// Upper bound on a single card line. Arena exports never exceed a few hundred
+// characters, and `std::regex` backtracks recursively — a pathologically long
+// line (fuzzer-found) could otherwise overflow the stack. Oversized lines are
+// malformed and skipped, exactly like any other unparseable line.
+constexpr std::size_t kMaxLineLength = 4096;
+
 // Header aliases -> canonical section id. Headers are lowercased before matching.
 std::optional<ArenaSection> sectionFromHeader(std::string_view header) {
   if (header == "mainboard" || header == "deck") {
@@ -163,7 +169,8 @@ ParsedSections parseArenaSections(std::string_view text) {
         text.substr(start, end == std::string_view::npos ? std::string_view::npos : end - start);
     const std::string line(trim(raw));
 
-    if (!line.empty() && !line.starts_with("//") && !line.starts_with("#")) {
+    if (!line.empty() && !line.starts_with("//") && !line.starts_with("#") &&
+        line.size() <= kMaxLineLength) {
       std::smatch match;
       bool is_section_header = false;
       if (std::regex_match(line, match, sectionHeaderRe())) {
@@ -215,7 +222,11 @@ std::vector<DeckEntry> aggregateEntries(const std::vector<DeckEntry> &entries) {
     if (inserted) {
       result.push_back(entry);
     } else {
-      result.at(it->second).quantity += entry.quantity;
+      // Saturating sum: quantities are clamped to INT_MAX on parse, and adding
+      // two clamped values must not overflow (a fuzzer found this).
+      int &quantity = result.at(it->second).quantity;
+      const int remaining = std::numeric_limits<int>::max() - quantity;
+      quantity += std::min(entry.quantity, remaining);
     }
   }
   return result;

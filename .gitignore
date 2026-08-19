@@ -4,6 +4,9 @@
 # Build directories (build, build-asan, build-release, ...)
 build*/
 
+# Packaged artifacts (tarballs/zips)
+dist/
+
 # Runtime/local data (bulk card DB, art cache, user decks)
 data/
 

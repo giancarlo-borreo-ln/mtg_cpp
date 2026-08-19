@@ -36,14 +36,43 @@ int runCheckCardsCommand(int argc, char **argv) {
   return mtgcpp::core::runCheckCards(jsonl, manifest);
 }
 
+// Directory of the running executable (bundle layout: assets/data live next
+// to the binary). Empty on failure — callers fall back to the working dir.
+std::filesystem::path executableDir() {
+#ifdef _WIN32
+  std::wstring buffer(32768, L'\0');
+  const DWORD length =
+      GetModuleFileNameW(nullptr, buffer.data(), static_cast<DWORD>(buffer.size()));
+  if (length > 0 && length < buffer.size()) {
+    return std::filesystem::path(buffer).parent_path();
+  }
+  return {};
+#else
+  std::error_code ec;
+  const std::filesystem::path self = std::filesystem::read_symlink("/proc/self/exe", ec);
+  if (!ec) {
+    return self.parent_path();
+  }
+  return {};
+#endif
+}
+
 // Load the local card database from the standard data/ location into `db`.
 // Missing files degrade to an empty database (the Deck Editor then shows a
-// "database not loaded" hint) rather than aborting the launch.
+// "database not loaded" hint) rather than aborting the launch. The packaged
+// bundle ships `data/` next to the executable, so that location is preferred;
+// the source/build-tree `./data` is the fallback.
 void loadCardDatabase(mtgcpp::core::CardDatabase &db) {
-  std::ifstream in("data/default-cards.jsonl");
+  std::filesystem::path jsonl = "data/default-cards.jsonl";
+  const std::filesystem::path bundled = executableDir() / "data" / "default-cards.jsonl";
+  std::error_code ec;
+  if (!bundled.empty() && std::filesystem::exists(bundled, ec) && !ec) {
+    jsonl = bundled;
+  }
+  std::ifstream in(jsonl);
   if (!in) {
-    std::cerr << "mtg_cpp: warning: data/default-cards.jsonl not found; "
-                 "Deck Editor card search is unavailable\n";
+    std::cerr << "mtg_cpp: warning: " << jsonl.string()
+              << " not found; Deck Editor card search is unavailable\n";
     return;
   }
   std::clog << "mtg_cpp: loading card database (this can take a while)...";
@@ -69,6 +98,9 @@ int main(int argc, char **argv) {
     loadCardDatabase(cardDb);
     mtgcpp::core::DeckRepository repository(mtgcpp::core::defaultDataDir());
     mtgcpp::core::App app(MTG_CPP_VERSION, repository, cardDb, mtgcpp::core::defaultDataDir());
+    // Runtime card art: download on demand into the app-data art cache, with
+    // the procedural fallback while offline / still downloading (M10.1).
+    app.setArtCacheEnabled(true);
     app.run();
   } catch (const std::exception &exc) {
     std::cerr << "mtg_cpp: fatal: " << exc.what() << '\n';

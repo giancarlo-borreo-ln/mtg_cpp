@@ -68,6 +68,27 @@ DeckEditorScreen::DeckEditorScreen() {
 
 void DeckEditorScreen::setDeckName(std::string name) { deckNameInput_.setText(std::move(name)); }
 
+CursorKind DeckEditorScreen::cursorAt(sf::Vector2f point) const {
+  // Editable text fields get the text caret.
+  if (searchInput_.contains(point) || deckNameInput_.contains(point) ||
+      importArea_.contains(point) || replaceInput_.contains(point)) {
+    return CursorKind::Text;
+  }
+  // Everything clickable: build-view buttons + lists, import-view controls.
+  // Widgets that are not laid out have zero-size bounds, so their contains()
+  // is always false — no visibility bookkeeping needed.
+  if (searchButton_.contains(point) || backButton_.contains(point) ||
+      importButton_.contains(point) || saveButton_.contains(point) ||
+      exportButton_.contains(point) || importCancelButton_.contains(point) ||
+      previewConfirmButton_.contains(point) || previewCancelButton_.contains(point) ||
+      replaceSearchButton_.contains(point) || replaceDismissButton_.contains(point) ||
+      resultsList_.contains(point) || deckList_.contains(point) || previewList_.contains(point) ||
+      replaceResultsList_.contains(point)) {
+    return CursorKind::Hand;
+  }
+  return CursorKind::Arrow;
+}
+
 void DeckEditorScreen::setDeck(std::vector<Card> cards) { deckList_.setCards(std::move(cards)); }
 
 void DeckEditorScreen::setResults(std::vector<Card> cards) {

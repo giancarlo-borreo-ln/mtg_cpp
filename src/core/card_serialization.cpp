@@ -5,8 +5,23 @@
 
 #include <optional>
 #include <string>
+#include <vector>
 
 namespace mtgcpp::core {
+
+namespace {
+
+// nlohmann's `.value()` throws on a type mismatch; these non-throwing readers
+// keep deserialization of untrusted input (wire deck payloads, deck files)
+// defensive — a malformed field degrades to empty, never to a crash.
+std::string readString(const nlohmann::json &obj, const char *key) {
+  if (obj.is_object() && obj.contains(key) && obj.at(key).is_string()) {
+    return obj.at(key).get<std::string>();
+  }
+  return {};
+}
+
+} // namespace
 
 nlohmann::json cardToJson(const Card &card) {
   nlohmann::json cmc = nullptr;
@@ -34,41 +49,52 @@ nlohmann::json cardToJson(const Card &card) {
 
 Card cardFromJson(const nlohmann::json &obj) {
   Card card;
-  card.scryfall_id = obj.value("scryfall_id", "");
-  card.name = obj.value("name", "");
-  card.set_code = obj.value("set_code", "");
-  card.set_name = obj.value("set_name", "");
-  card.collector_number = obj.value("collector_number", "");
-  card.quantity = obj.value("quantity", 1);
-  card.mana_cost = obj.value("mana_cost", "");
-  if (obj.contains("section") && obj.at("section").is_string()) {
+  card.scryfall_id = readString(obj, "scryfall_id");
+  card.name = readString(obj, "name");
+  card.set_code = readString(obj, "set_code");
+  card.set_name = readString(obj, "set_name");
+  card.collector_number = readString(obj, "collector_number");
+  if (obj.is_object() && obj.contains("quantity") && obj.at("quantity").is_number_integer()) {
+    card.quantity = obj.at("quantity").get<int>();
+  }
+  card.mana_cost = readString(obj, "mana_cost");
+  if (obj.is_object() && obj.contains("section") && obj.at("section").is_string()) {
     const std::optional<ArenaSection> section =
         arenaSectionFromString(obj.at("section").get<std::string>());
     if (section.has_value()) {
       card.section = section.value();
     }
   }
-  if (obj.contains("cmc") && obj.at("cmc").is_number()) {
+  if (obj.is_object() && obj.contains("cmc") && obj.at("cmc").is_number()) {
     card.cmc = obj.at("cmc").get<float>();
   }
-  if (obj.contains("colors")) {
+  if (obj.is_object() && obj.contains("colors") && obj.at("colors").is_array()) {
     for (const nlohmann::json &color : obj.at("colors")) {
-      card.colors.push_back(color.get<std::string>());
+      if (color.is_string()) {
+        card.colors.push_back(color.get<std::string>());
+      }
     }
   }
-  card.type_line = obj.value("type_line", "");
-  if (obj.contains("image_uris")) {
+  card.type_line = readString(obj, "type_line");
+  if (obj.is_object() && obj.contains("image_uris") && obj.at("image_uris").is_object()) {
     for (const auto &entry : obj.at("image_uris").items()) {
-      card.image_uris.emplace(entry.key(), entry.value().get<std::string>());
+      if (entry.value().is_string()) {
+        card.image_uris.emplace(entry.key(), entry.value().get<std::string>());
+      }
     }
   }
-  if (obj.contains("card_faces")) {
+  if (obj.is_object() && obj.contains("card_faces") && obj.at("card_faces").is_array()) {
     for (const nlohmann::json &faceObj : obj.at("card_faces")) {
+      if (!faceObj.is_object()) {
+        continue;
+      }
       ScryfallFace face;
-      face.name = faceObj.value("name", "");
-      if (faceObj.contains("image_uris")) {
+      face.name = readString(faceObj, "name");
+      if (faceObj.contains("image_uris") && faceObj.at("image_uris").is_object()) {
         for (const auto &entry : faceObj.at("image_uris").items()) {
-          face.image_uris.emplace(entry.key(), entry.value().get<std::string>());
+          if (entry.value().is_string()) {
+            face.image_uris.emplace(entry.key(), entry.value().get<std::string>());
+          }
         }
       }
       card.card_faces.push_back(std::move(face));
@@ -99,19 +125,30 @@ nlohmann::json deckToJson(const Deck &deck) {
 
 Deck deckFromJson(const nlohmann::json &obj) {
   Deck deck;
-  deck.id = obj.value("id", "");
-  deck.name = obj.value("name", "");
-  deck.format = obj.value("format", "Other");
-  deck.total_cards = obj.value("total_cards", 0);
-  deck.unique_cards = obj.value("unique_cards", 0);
-  if (obj.contains("preview_image") && obj.at("preview_image").is_string()) {
-    deck.preview_image = obj.at("preview_image").get<std::string>();
+  deck.id = readString(obj, "id");
+  deck.name = readString(obj, "name");
+  deck.format = readString(obj, "format");
+  if (deck.format.empty()) {
+    deck.format = "Other";
   }
-  deck.created_at = obj.value("created_at", "");
-  deck.updated_at = obj.value("updated_at", "");
-  if (obj.contains("cards")) {
+  if (obj.is_object() && obj.contains("total_cards") && obj.at("total_cards").is_number_integer()) {
+    deck.total_cards = obj.at("total_cards").get<int>();
+  }
+  if (obj.is_object() && obj.contains("unique_cards") &&
+      obj.at("unique_cards").is_number_integer()) {
+    deck.unique_cards = obj.at("unique_cards").get<int>();
+  }
+  const std::string preview = readString(obj, "preview_image");
+  if (!preview.empty()) {
+    deck.preview_image = preview;
+  }
+  deck.created_at = readString(obj, "created_at");
+  deck.updated_at = readString(obj, "updated_at");
+  if (obj.is_object() && obj.contains("cards") && obj.at("cards").is_array()) {
     for (const nlohmann::json &cardObj : obj.at("cards")) {
-      deck.cards.push_back(cardFromJson(cardObj));
+      if (cardObj.is_object()) {
+        deck.cards.push_back(cardFromJson(cardObj));
+      }
     }
   }
   return deck;

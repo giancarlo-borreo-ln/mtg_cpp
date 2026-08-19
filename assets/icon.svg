@@ -1,0 +1,26 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="128" height="128" viewBox="0 0 128 128">
+  <!-- mtg_cpp app icon: velvet field, gold frame, gold "MTG" monogram (M11.2).
+       Mirrors the procedural paintAppIcon(); used by the .desktop launcher and
+       Windows packaging. -->
+  <rect width="128" height="128" fill="#2a1214"/>
+  <rect x="2" y="2" width="124" height="124" fill="none" stroke="#d8b43f" stroke-width="4"/>
+  <!-- "M" -->
+  <g fill="#d8b43f">
+    <rect x="30" y="44" width="12" height="40"/>
+    <rect x="42" y="44" width="12" height="40"/>
+    <polygon points="30,44 54,44 42,60"/>
+  </g>
+  <!-- "T" -->
+  <g fill="#d8b43f">
+    <rect x="60" y="44" width="8" height="40"/>
+    <rect x="50" y="44" width="28" height="8"/>
+  </g>
+  <!-- "G" -->
+  <g fill="#d8b43f">
+    <rect x="82" y="44" width="8" height="40"/>
+    <rect x="82" y="44" width="24" height="8"/>
+    <rect x="82" y="76" width="24" height="8"/>
+    <rect x="98" y="44" width="8" height="40"/>
+    <rect x="82" y="68" width="24" height="8"/>
+  </g>
+</svg>

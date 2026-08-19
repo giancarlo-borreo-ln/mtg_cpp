@@ -5,7 +5,7 @@ FastAPI webapp (`../mtg_with_ste`) into a single cross-platform C++20 executable
 Graphics styled after the 1990s MicroProse *Shandalar*. The second player connects
 directly to the host's app over TCP — no separate server process.
 
-> Status: **Sprint 9 (M9.1–M9.5) + Sprint 12 (M12.1–M12.3)** — card models (`core/card.h`), board model +
+> Status: **Sprint 9 (M9.1–M9.5) + Sprint 10 (M10.1–M10.3) + Sprint 11 (M11.1–M11.3) + Sprint 12 (M12.1–M12.3)** — card models (`core/card.h`), board model +
 > moves (`core/board.h`), Arena deck parser (`core/deck_parser.h`) and formatter
 > (`core/arena.h`), DB integrity tool (`mtg_cpp check-cards`), local card
 > database (`core/card_database.h`, incl. `search()` for name + set/collector)
@@ -53,7 +53,31 @@ directly to the host's app over TCP — no separate server process.
 > late joiners learn it, and minted even when chosen before the join lands),
 > learn the opponent's deck, hand-reveal consent, and the ready→table
 > transition. Headless loopback tests prove both sides replay the same actions
-> to byte-identical battlefields with no echo. **Sprint 12 — integration
+> to byte-identical battlefields with no echo. **Sprint 10 — M10.1 runtime art
+> cache (`ui/art_cache.h`):** card art is downloaded on demand over HTTPS (cpr,
+> behind an injectable fetcher) in a worker thread and persisted as PNGs into
+> the app-data `art_cache/` dir, keyed by scryfall id + pixel size with atomic
+> writes; the table (`ui/screens/table_screen.h`) requests art for every
+> face-up card, drains completed downloads each frame via `pumpArt()`, and keeps
+> the procedural front texture as the fallback while a card is still
+> downloading, offline, or when the cache is disabled. **Sprint 10 — M10.2 wire
+> hardening:** every inbound payload is validated through non-throwing readers
+> before use (`net/envelope.h` `readPayload*`, safe deck/reveal parsing), so a
+> malformed frame is rejected or ignored, never allowed to crash the app; the
+> relay **drops** the connection on a malformed frame (and on oversize, with the
+> seat freed); a redundant `deck_selected` re-announce no longer re-mints the
+> opponent's seat (which used to un-tap played cards — boards can't drift); an
+> unexpected socket loss fans out to the peer as a `connection_lost` event so
+> the host shutting down cleanly tears the room down on both sides; and the
+> relay's accept loop starts before its io thread, so a first connection is
+> never dropped under load. **Sprint 10 — M10.3 polish + soak:** per-screen
+> cursor states (`ui/cursor.h` — each screen exposes a pure `cursorAt(point)`
+> hit-test; the App applies Hand over clickable cards/rows/buttons, Text over
+> editable fields, Arrow elsewhere); a **soak test** (`tests/state/soak_test.cpp`)
+> plays 400 rapid fire-and-forget actions over loopback and asserts byte-identical
+> battlefields with no drift, no echo, and no leaks at every checkpoint; and a
+> full synced match is played while both tables' art caches are live, proving
+> the procedural front is replaced by real art on both sides. **Sprint 12 — integration
 > harness:** `App::injectEvent`/`App::pump` (a scripting seam that pushes
 > synthetic mouse/key events through the exact window-loop handler, minus window
 > side effects) and `src/integration.cpp` (`mtg_cpp_integration`) which drives
@@ -92,6 +116,7 @@ runtime art cache (Sprint 10) is for personal play and must not be redistributed
 | SFML      | 2.6     | 2D graphics / window / input     | prebuilt dir, system, or FetchContent |
 | nlohmann/json | 3.11.3 | JSON (cards, envelopes, decks)   | FetchContent       |
 | Asio      | 1.30    | TCP networking (Sprint 6)        | FetchContent       |
+| cpr       | 1.10.5  | HTTPS card-art downloads (Sprint 10) | FetchContent (builds curl + OpenSSL if no system curl) |
 | GoogleTest| 1.15.2  | Unit tests                       | FetchContent       |
 
 ## Building
@@ -128,6 +153,37 @@ cmake --build build-asan
 ctest --test-dir build-asan --output-on-failure
 ```
 
+### Fuzzing (M11.1)
+
+Structure-aware fuzz targets cover the two untrusted-input paths: the Arena
+deck parser and the network envelope/framing. With clang they link libFuzzer
+(`-fsanitize=fuzzer`, which provides `main`); with GCC the same target runs a
+fixed-budget mutation driver over the seed corpus. `scripts/fuzz.sh` builds the
+ASan/UBSan fuzzers and runs each for a fixed time budget — any crash or UB
+fails the gate.
+
+```bash
+bash scripts/fuzz.sh 30 7      # 30 seconds per target, seed 7
+```
+
+The seed corpus + a fixed set of adversarial inputs are also replayed in the
+unit suite (`tests/fuzz/fuzz_corpus_test.cpp`), so every CI runner asserts the
+no-crash/no-UB property without running the fuzzers. Fuzzing has so far found
+three real bugs, all fixed with regression tests: a signed-overflow quantity
+sum, a null-pointer `memcpy` on zero-length input, and a regex stack overflow
+on pathologically long card lines (now length-capped).
+
+### ThreadSanitizer (M11.1)
+
+`MTG_CPP_ENABLE_TSAN` builds with ThreadSanitizer (exclusive of ASan/UBSan);
+the loopback/session suites run clean under it (a CI job does the same).
+
+```bash
+cmake -S . -B build-tsan -G Ninja -DCMAKE_BUILD_TYPE=Debug -DMTG_CPP_ENABLE_TSAN=ON
+cmake --build build-tsan
+ctest --test-dir build-tsan --output-on-failure
+```
+
 ## Static analysis & CI
 
 - `.clang-tidy` — curated correctness/memory-safety checks, promoted to errors
@@ -135,8 +191,26 @@ ctest --test-dir build-asan --output-on-failure
 - `.clang-format` — enforced style (`clang-format --dry-run --Werror`).
 - `scripts/ci-linux.sh [clang|gcc]` — build + ASan/UBSan test + format + tidy.
 - `scripts/ci-windows.ps1` — MSVC Debug build + test.
-- `.github/workflows/ci.yml` — Linux (GCC + Clang, sanitizers, clang-tidy) and
-  Windows (MSVC Debug) runners on every push/PR.
+- `.github/workflows/ci.yml` — Linux (GCC + Clang, sanitizers, clang-tidy, a
+  fixed-budget fuzz step), a Linux TSan runner, and Windows (MSVC Debug).
+
+## Packaging (M11.2)
+
+The app ships as a relocatable bundle (no working-directory assumptions): the
+window/taskbar icon is painted procedurally (`paintAppIcon`), and the card
+database is resolved next to the executable first, then from `./data`.
+
+```bash
+bash scripts/package-linux.sh           # dist/mtg_cpp-<version>-linux-x86_64.tar.gz
+MTG_CPP_BUNDLE_DATA=1 bash scripts/package-linux.sh   # also bundle the local card DB
+powershell -ExecutionPolicy Bypass -File scripts\package-windows.ps1  # dist/*.zip
+```
+
+The bundle contains `bin/` (the executable + a self-contained launcher), `lib/`
+(runtime shared libraries, `$ORIGIN/../lib` rpath), `assets/` (fonts + icon) and
+optionally `data/`. A clean install runs `bin/mtg_cpp.sh` (Linux) or the exe
+(Windows); if `data/` was not bundled, run `scripts/fetch_card_db.sh` in the
+install directory first.
 
 ## Multiplayer walkthrough (Sprint 8)
 

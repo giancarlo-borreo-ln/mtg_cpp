@@ -15,6 +15,7 @@
 #pragma once
 
 #include "core/card.h"
+#include "ui/cursor.h"
 #include "ui/widgets/button.h"
 #include "ui/widgets/deck_list_view.h"
 
@@ -81,6 +82,9 @@ public:
   HomeAction pollAction();
 
   void draw(sf::RenderTarget &target, const sf::Font &font, const sf::Font &boldFont) const;
+
+  // The pointer over `point`: Hand over profile cards / deck rows / buttons.
+  CursorKind cursorAt(sf::Vector2f point) const;
 
   // Exposed for tests: the picker's profile cards (index = profile order) and
   // the vault's widgets.

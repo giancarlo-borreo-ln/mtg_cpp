@@ -100,6 +100,56 @@ WsEnvelope errorEvent(std::string_view room, std::string_view code, std::string_
                     {{"code", std::string(code)}, {"message", std::string(message)}}};
 }
 
+WsEnvelope connectionLostEvent(std::string_view room) {
+  return WsEnvelope{std::string(WSEvents::kConnectionLost), std::string(room), "server",
+                    nlohmann::json::object()};
+}
+
+std::optional<std::string> readPayloadString(const nlohmann::json &payload, std::string_view key) {
+  if (!payload.is_object() || !payload.contains(key) || !payload.at(key).is_string()) {
+    return std::nullopt;
+  }
+  return payload.at(key).get<std::string>();
+}
+
+std::optional<bool> readPayloadBool(const nlohmann::json &payload, std::string_view key) {
+  if (!payload.is_object() || !payload.contains(key) || !payload.at(key).is_boolean()) {
+    return std::nullopt;
+  }
+  return payload.at(key).get<bool>();
+}
+
+std::optional<std::vector<std::string>> readPayloadStringArray(const nlohmann::json &payload,
+                                                               std::string_view key) {
+  if (!payload.is_object() || !payload.contains(key) || !payload.at(key).is_array()) {
+    return std::nullopt;
+  }
+  std::vector<std::string> values;
+  values.reserve(payload.at(key).size());
+  for (const nlohmann::json &entry : payload.at(key)) {
+    if (entry.is_string()) {
+      values.push_back(entry.get<std::string>());
+    }
+  }
+  return values;
+}
+
+std::optional<nlohmann::json> readPayloadObject(const nlohmann::json &payload,
+                                                std::string_view key) {
+  if (!payload.is_object() || !payload.contains(key) || !payload.at(key).is_object()) {
+    return std::nullopt;
+  }
+  return payload.at(key);
+}
+
+std::optional<nlohmann::json> readPayloadArray(const nlohmann::json &payload,
+                                               std::string_view key) {
+  if (!payload.is_object() || !payload.contains(key) || !payload.at(key).is_array()) {
+    return std::nullopt;
+  }
+  return payload.at(key);
+}
+
 namespace Framing {
 
 std::string encodeFrame(std::string_view payload) {

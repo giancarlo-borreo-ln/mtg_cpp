@@ -17,6 +17,7 @@ set(CMAKE_EXPORT_COMPILE_COMMANDS ON)
 
 option(MTG_CPP_BUILD_TESTS       "Build the unit test suite" ON)
 option(MTG_CPP_ENABLE_SANITIZERS "Build with AddressSanitizer + UBSan (Linux, GCC/Clang)" OFF)
+option(MTG_CPP_ENABLE_TSAN       "Build with ThreadSanitizer (Linux, GCC/Clang; exclusive of ASan/UBSan)" OFF)
 
 set(MTG_CPP_SFML_DIR "" CACHE PATH
   "Path to a prebuilt SFML (the directory containing lib/cmake/SFML). \
@@ -28,6 +29,17 @@ if(MTG_CPP_ENABLE_SANITIZERS)
   endif()
   add_compile_options(-g -fsanitize=address,undefined -fno-omit-frame-pointer)
   add_link_options(-fsanitize=address,undefined)
+endif()
+
+if(MTG_CPP_ENABLE_TSAN)
+  if(MSVC)
+    message(FATAL_ERROR "MTG_CPP_ENABLE_TSAN is not supported on MSVC.")
+  endif()
+  if(MTG_CPP_ENABLE_SANITIZERS)
+    message(FATAL_ERROR "MTG_CPP_ENABLE_TSAN cannot be combined with MTG_CPP_ENABLE_SANITIZERS.")
+  endif()
+  add_compile_options(-g -fsanitize=thread -fno-omit-frame-pointer)
+  add_link_options(-fsanitize=thread)
 endif()
 
 if(MSVC)
@@ -97,6 +109,27 @@ if(NOT SFML_FOUND)
 endif()
 
 # ---------------------------------------------------------------------------
+# cpr — HTTP client for the runtime art cache (Sprint 10)
+# ---------------------------------------------------------------------------
+# cpr wraps libcurl; it pulls a from-source curl when no system curl dev package
+# is present (the OpenSSL backend is used, so HTTPS art downloads work on a
+# clean machine). cpr's CMake does the curl FetchContent itself.
+FetchContent_Declare(cpr
+  GIT_REPOSITORY https://github.com/libcpr/cpr.git
+  GIT_TAG 1.10.5
+  GIT_SHALLOW TRUE)
+set(CPR_BUILD_TESTS OFF CACHE BOOL "" FORCE)
+set(CPR_BUILD_EXAMPLES OFF CACHE BOOL "" FORCE)
+set(CPR_FORCE_USE_SYSTEM_CURL OFF CACHE BOOL "" FORCE)
+FetchContent_MakeAvailable(cpr)
+
+# curl's bundled zlib-ng forces BUILD_TESTING OFF in the cache; restore the
+# project's own test-suite switch so our gtest target is still built.
+if(MTG_CPP_BUILD_TESTS AND NOT BUILD_TESTING)
+  set(BUILD_TESTING ON CACHE BOOL "" FORCE)
+endif()
+
+# ---------------------------------------------------------------------------
 # Core domain library
 # ---------------------------------------------------------------------------
 add_library(mtg_cpp_core
@@ -160,6 +193,7 @@ add_library(mtg_cpp_ui
   src/ui/theme.cpp
   src/ui/layout.cpp
   src/ui/app.cpp
+  src/ui/art_cache.cpp
   src/ui/widgets/button.cpp
   src/ui/widgets/text_input.cpp
   src/ui/widgets/list_view.cpp
@@ -177,6 +211,7 @@ add_library(mtg_cpp_ui
   src/ui/screens/table_screen.cpp)
 target_include_directories(mtg_cpp_ui PUBLIC src)
 target_link_libraries(mtg_cpp_ui PUBLIC mtg_cpp_core mtg_cpp_state sfml-graphics sfml-window sfml-system)
+target_link_libraries(mtg_cpp_ui PRIVATE cpr::cpr)
 
 # ---------------------------------------------------------------------------
 # Main executable
@@ -191,6 +226,36 @@ target_compile_definitions(mtg_cpp PRIVATE MTG_CPP_VERSION="${PROJECT_VERSION}")
 add_executable(mtg_cpp_integration src/integration.cpp)
 target_link_libraries(mtg_cpp_integration PRIVATE mtg_cpp_ui)
 target_compile_definitions(mtg_cpp_integration PRIVATE MTG_CPP_VERSION="${PROJECT_VERSION}")
+
+# ---------------------------------------------------------------------------
+# Fuzz targets (M11.1): structure-aware fuzz of the deck parser + the network
+# envelope/framing. With clang the targets link libFuzzer (`-fsanitize=fuzzer`,
+# which provides main); otherwise the shared driver main runs a fixed-budget
+# mutation loop over the seed corpus. Only meaningful under the ASan/UBSan
+# build (the sanitizers catch the crash/UB a target would hide otherwise).
+# ---------------------------------------------------------------------------
+option(MTG_CPP_BUILD_FUZZERS "Build the structure-aware fuzz targets" ${MTG_CPP_ENABLE_SANITIZERS})
+
+if(MTG_CPP_BUILD_FUZZERS)
+  include(CheckCXXCompilerFlag)
+  check_cxx_compiler_flag("-fsanitize=fuzzer" MTG_CPP_HAVE_LIBFUZZER)
+
+  function(mtg_cpp_add_fuzz_target target source)
+    add_executable(${target} ${source} src/fuzz/fuzz_target.cpp)
+    target_include_directories(${target} PRIVATE src)
+    target_link_libraries(${target} PRIVATE mtg_cpp_core mtg_cpp_net Threads::Threads)
+    if(MTG_CPP_HAVE_LIBFUZZER)
+      target_compile_options(${target} PRIVATE -fsanitize=fuzzer,address,undefined -g -fno-omit-frame-pointer)
+      target_link_options(${target} PRIVATE -fsanitize=fuzzer,address,undefined)
+    else()
+      target_compile_definitions(${target} PRIVATE MTG_CPP_FUZZ_DRIVER)
+      target_compile_options(${target} PRIVATE -fsanitize=address,undefined -g -fno-omit-frame-pointer)
+      target_link_options(${target} PRIVATE -fsanitize=address,undefined)
+    endif()
+  endfunction()
+  mtg_cpp_add_fuzz_target(mtg_cpp_fuzz_parser src/fuzz/fuzz_deck_parser.cpp)
+  mtg_cpp_add_fuzz_target(mtg_cpp_fuzz_envelope src/fuzz/fuzz_envelope.cpp)
+endif()
 
 # ---------------------------------------------------------------------------
 # Tests
@@ -224,9 +289,12 @@ if(MTG_CPP_BUILD_TESTS)
       tests/net/server_test.cpp
       tests/net/routing_test.cpp
       tests/net/two_peer_integration_test.cpp
+      tests/net/wire_hardening_test.cpp
       tests/state/board_state_test.cpp
       tests/state/sync_test.cpp
       tests/state/session_test.cpp
+      tests/state/soak_test.cpp
+      tests/fuzz/fuzz_corpus_test.cpp
       tests/ui/layout_test.cpp
       tests/ui/app_test.cpp
       tests/ui/widgets_test.cpp
@@ -239,11 +307,14 @@ if(MTG_CPP_BUILD_TESTS)
       tests/ui/deck_editor_screen_test.cpp
       tests/ui/lobby_screen_test.cpp
       tests/ui/theme_test.cpp
+      tests/ui/art_cache_test.cpp
+      tests/ui/cursor_test.cpp
       tests/ui/card_view_test.cpp
       tests/ui/zone_view_test.cpp
       tests/ui/context_menu_test.cpp
       tests/ui/table_screen_test.cpp)
-    target_compile_definitions(mtg_cpp_tests PRIVATE MTG_CPP_VERSION="${PROJECT_VERSION}")
+    target_compile_definitions(mtg_cpp_tests PRIVATE MTG_CPP_VERSION="${PROJECT_VERSION}"
+      MTG_CPP_SOURCE_DIR="${CMAKE_CURRENT_SOURCE_DIR}")
     target_link_libraries(mtg_cpp_tests PRIVATE
       mtg_cpp_core
       mtg_cpp_net

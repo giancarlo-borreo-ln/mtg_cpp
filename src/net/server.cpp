@@ -66,8 +66,12 @@ void Server::handleConnected(std::size_t connectionId) {
 void Server::handleFrame(std::size_t connectionId, std::string_view rawFrame) {
   const std::optional<WsEnvelope> envelope = parseEnvelope(rawFrame);
   if (!envelope.has_value()) {
+    // Malformed frame: tell the sender why, then DROP the connection (M10.2
+    // wire hardening) — a well-behaved client never sends garbage, so the
+    // connection is not worth keeping.
     sendToConnection(connectionId, errorEvent(kDefaultRoom, WSErrorCodes::kInvalidMessage,
                                               "Envelope must have event, room, from, payload"));
+    transport_.close(connectionId);
     return;
   }
   if (envelope.value().room != kDefaultRoom) {
@@ -135,7 +139,10 @@ void Server::routeHandReveal(const WsEnvelope &envelope, const std::string &seat
     routed.payload = {{"from", seat}};
   } else if (envelope.event == WSEvents::kHandRevealAccept) {
     routed.event = WSEvents::kHandRevealResult;
-    const nlohmann::json cards = envelope.payload.value("cards", nlohmann::json::array());
+    // The card list is untrusted: a malformed `cards` value degrades to an
+    // empty list instead of crashing the relay (never trust the wire).
+    const nlohmann::json cards =
+        readPayloadArray(envelope.payload, "cards").value_or(nlohmann::json::array());
     routed.payload = {{"accepted", true}, {"cards", cards}};
   } else { // HandRevealDeny
     routed.event = WSEvents::kHandRevealResult;

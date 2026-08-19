@@ -74,7 +74,9 @@ private:
             self->transport_->pushFrame(self->id_, frame.value());
           }
           if (self->decoder_.oversize()) {
-            // Oversize frame: drop the connection, never trust the wire.
+            // Oversize frame: drop the connection AND report it, so the server
+            // frees the seat (never trust the wire).
+            self->transport_->onSessionGone(self->id_, asio::error::operation_aborted);
             asio::error_code ignored;
             self->socket_.close(ignored);
             return;
@@ -138,8 +140,12 @@ void AsioTransport::start() {
   acceptor_.set_option(asio::ip::tcp::acceptor::reuse_address(true));
   acceptor_.bind(asio::ip::tcp::endpoint(asio::ip::tcp::v4(), port_));
   acceptor_.listen();
-  thread_ = std::thread([this] { ioContext_.run(); });
+  // Queue the first accept BEFORE the io thread starts: `run()` returns when
+  // it has no work, so a thread that starts before the accept was posted would
+  // exit immediately and the relay would never accept a connection (M10.2
+  // wire-hardening — this stalled joins under load).
   asio::post(ioContext_, [this] { startAccept(); });
+  thread_ = std::thread([this] { ioContext_.run(); });
 }
 
 void AsioTransport::stop() {

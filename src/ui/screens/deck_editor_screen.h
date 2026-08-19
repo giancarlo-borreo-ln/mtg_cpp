@@ -26,6 +26,7 @@
 #include "core/card.h"
 #include "core/deck_editor.h"
 #include "core/import_preview.h"
+#include "ui/cursor.h"
 #include "ui/widgets/button.h"
 #include "ui/widgets/card_list.h"
 #include "ui/widgets/deck_builder_list.h"
@@ -121,6 +122,10 @@ public:
   DeckEditorAction pollAction();
 
   void draw(sf::RenderTarget &target, const sf::Font &font, const sf::Font &boldFont) const;
+
+  // The pointer over `point`: Text over the search / deck-name / replace /
+  // import text fields, Hand over buttons and list rows.
+  CursorKind cursorAt(sf::Vector2f point) const;
 
   // --- Action payloads (read by the App before the next poll) ---------------
   const std::string &searchQuery() const { return searchQuery_; }

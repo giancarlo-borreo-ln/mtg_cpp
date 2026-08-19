@@ -47,6 +47,8 @@
 #include "net/transport.h"
 #include "state/session.h"
 #include "store/deck_repository.h"
+#include "ui/art_cache.h"
+#include "ui/cursor.h"
 #include "ui/screens/deck_editor_screen.h"
 #include "ui/screens/home_screen.h"
 #include "ui/screens/lobby_screen.h"
@@ -92,6 +94,16 @@ public:
   // Router: switch the active screen (updates heading + body text + layout).
   void switchTo(Screen screen);
 
+  // Enable/disable the runtime art cache (M10.1). Off by default so the app can
+  // run fully offline / without downloads; the real launcher turns it on. The
+  // table keeps its procedural fallback while it is off.
+  void setArtCacheEnabled(bool enabled);
+
+  // The pointer the active screen wants over `point` (M10.3): Hand over
+  // clickable widgets, Text over editable fields, Arrow otherwise. Pure, so
+  // tests pin the mapping without a display.
+  CursorKind cursorAt(sf::Vector2f point) const;
+
   Screen currentScreen() const { return screen_; }
 
   // True when the bundled regular font was found and parsed. Screens keep
@@ -131,6 +143,9 @@ private:
   void handleEvent(sf::RenderWindow &window, const sf::Event &event);
   void pollActions();
   void draw(sf::RenderWindow &window);
+  // Apply the pointer shape the active screen wants at `point` (M10.3), only
+  // when it changes. Degrades to the default arrow if a cursor failed to load.
+  void updateCursor(sf::RenderWindow &window, sf::Vector2f point);
 
   // Recompute the chrome and the active screen's widgets from windowSize_.
   // Called at startup and on every window resize (the single layout pass).
@@ -165,9 +180,10 @@ private:
   void pumpTable();
   void onTableAction(TableAction action);
 
-  DeckRepository &decks_;         // the deck store (owned by main)
-  const CardDatabase &cards_;     // the local card database (owned by main)
-  std::filesystem::path dataDir_; // where profile.json lives
+  DeckRepository &decks_;                    // the deck store (owned by main)
+  const CardDatabase &cards_;                // the local card database (owned by main)
+  std::filesystem::path dataDir_;            // where profile.json + the art cache live
+  std::unique_ptr<core::ArtCache> artCache_; // runtime card art (M10.1)
   HomeScreen home_;
   DeckEditorScreen deckEditor_;
   LobbyScreen lobby_;
@@ -207,6 +223,14 @@ private:
   // shown (the table draws it full-window, replacing the menu background).
   sf::Texture playmat_;
   sf::Vector2u playmatSize_{0u, 0u};
+
+  // Cursor states (M10.3): loaded once; the active screen's cursorAt drives
+  // which one is applied each frame.
+  sf::Cursor handCursor_;
+  sf::Cursor textCursor_;
+  bool handCursorLoaded_ = false;
+  bool textCursorLoaded_ = false;
+  CursorKind appliedCursor_ = CursorKind::Arrow;
 
   sf::Text wordmark_;    // app name, top-left
   sf::Text versionText_; // version, top-right

@@ -265,12 +265,33 @@ TEST(AggregateNameOnlyAndPrintingFormsStaySeparate, NeverMerge) {
   const std::string text = "2 Burst Lightning\n1 Burst Lightning (MKM) 132\n";
 
   const std::vector<DeckEntry> agg = aggregateEntries(parseArenaText(text));
-
   ASSERT_EQ(agg.size(), 2u);
   EXPECT_EQ(agg.at(0).set_code, "");
   EXPECT_EQ(agg.at(0).quantity, 2);
   EXPECT_EQ(agg.at(1).set_code, "MKM");
   EXPECT_EQ(agg.at(1).quantity, 1);
+}
+
+TEST(AggregateSaturatingSum, ClampsInsteadOfOverflowing) {
+  // Regression: a fuzzer found signed integer overflow when two clamped
+  // INT_MAX quantities aggregated. The sum must saturate, never wrap.
+  const std::string text = "2147483647 Forest (WAR) 263\n2147483647 Forest (WAR) 263\n";
+
+  const std::vector<DeckEntry> agg = aggregateEntries(parseArenaText(text));
+  ASSERT_EQ(agg.size(), 1u);
+  EXPECT_EQ(agg.at(0).quantity, 2147483647);
+}
+
+TEST(ParseArenaText, OversizedLinesAreSkippedWithoutCrashing) {
+  // Regression: a fuzzer (under TSan) found that std::regex backtracks
+  // recursively on pathologically long lines, overflowing the stack. Oversized
+  // lines are malformed and must be skipped; the text below still parses the
+  // one real card line.
+  const std::string text = "1 Forest (WAR) 263\n" + std::string(1024 * 1024, 'a') + "\n";
+
+  const std::vector<DeckEntry> agg = aggregateEntries(parseArenaText(text));
+  ASSERT_EQ(agg.size(), 1u);
+  EXPECT_EQ(agg.at(0).name, "Forest");
 }
 
 } // namespace

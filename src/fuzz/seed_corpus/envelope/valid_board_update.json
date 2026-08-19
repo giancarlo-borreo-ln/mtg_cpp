@@ -1,0 +1,1 @@
+{"event":"board_update","room":"room","from":"player_1","payload":{"action":"tapCard","seat":"host","cardId":"host-3"}}
