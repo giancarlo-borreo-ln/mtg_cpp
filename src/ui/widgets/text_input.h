@@ -47,8 +47,15 @@ public:
   void insert(std::string_view chunk);
   // Remove the character just before the caret.
   void backspace();
+  // Remove the character at the caret (the Delete key's forward delete).
+  void eraseAtCaret();
+  // Read the OS clipboard and insert its printable ASCII at the caret
+  // (non-ASCII content is dropped; a focused field is a paste target).
+  void pasteFromClipboard();
   void moveCaretLeft();
   void moveCaretRight();
+  void moveCaretToStart();
+  void moveCaretToEnd();
   void setCaret(std::size_t index); // clamped to the text length
   std::size_t caret() const { return caret_; }
 

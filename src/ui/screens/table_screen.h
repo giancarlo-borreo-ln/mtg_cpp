@@ -99,6 +99,11 @@ public:
   // Drain the cache and build textures for cards whose art just arrived. Called
   // once per frame by the App (main thread, needs a GL context).
   void pumpArt();
+  // Release every GPU texture (procedural + cached art). Called when the window
+  // is recreated (fullscreen toggle) so the stale context-bound textures are
+  // destroyed while the old context is still alive; relayout()/pumpArt() then
+  // rebuild them on the new context.
+  void releaseTextures();
   // The cached art texture for a face-up card, or nullptr (procedural front).
   // Read-only; exposed so tests can assert the fallback path.
   const sf::Texture *artTextureFor(const BoardCard &card) const;

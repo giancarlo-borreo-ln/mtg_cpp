@@ -1,0 +1,2 @@
+{"id":"id-lb-1","name":"Lightning Bolt","set":"lb","set_name":"Test Set","collector_number":"1","mana_cost":"{R}","cmc":1.0,"colors":["R"],"type_line":"Instant","image_uris":{"png":"https://img/1.png"}}
+{"id":"id-is-2","name":"Island","set":"is","set_name":"Test Set","collector_number":"2","mana_cost":"","cmc":0.0,"colors":[],"type_line":"Basic Land — Island","image_uris":{"png":"https://img/2.png"}}

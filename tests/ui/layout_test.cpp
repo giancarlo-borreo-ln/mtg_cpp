@@ -26,12 +26,13 @@ TEST(UiScale, ScalesWithWindowHeightNotWidth) {
 }
 
 TEST(UiScale, ClampsToAReadableRange) {
-  // A tiny window must not crush the menu below 0.75x; a huge one must not
-  // balloon it above 1.5x.
+  // A tiny window must not crush the menu below 0.75x; a high-resolution
+  // monitor must scale the UI up (the old 1.5x ceiling left 1440p/4K tiny).
   EXPECT_FLOAT_EQ(uiScale({640u, 320u}), 0.75f);
   EXPECT_FLOAT_EQ(uiScale({640u, 100u}), 0.75f);
-  EXPECT_FLOAT_EQ(uiScale({1600u, 1600u}), 1.5f);
-  EXPECT_FLOAT_EQ(uiScale({1600u, 2000u}), 1.5f);
+  EXPECT_NEAR(uiScale({1600u, 1600u}), 2.666f, 1e-3f);
+  EXPECT_FLOAT_EQ(uiScale({1600u, 2000u}), 3.0f);
+  EXPECT_FLOAT_EQ(uiScale({3840u, 2160u}), 3.0f);
 }
 
 TEST(UiScale, ZeroSizedWindowDefaultsToOne) { EXPECT_FLOAT_EQ(uiScale({0u, 0u}), 1.f); }
@@ -178,11 +179,15 @@ TEST(TableZoneRect, MirrorsTheGridTemplateAreas) {
   const sf::FloatRect instants = tableZoneRect(grid, PlayerZone::InstantsSorceries);
   const sf::FloatRect graveyard = tableZoneRect(grid, PlayerZone::Graveyard);
   const sf::FloatRect exile = tableZoneRect(grid, PlayerZone::Exile);
-  // Lands span the whole bottom row.
+  const sf::FloatRect artifacts = tableZoneRect(grid, PlayerZone::Artifacts);
+  // Lands take the bottom-left pair, artifacts the bottom-right cell.
   EXPECT_NEAR(lands.left, 0.f, 1e-3f);
   EXPECT_NEAR(lands.top, 60.f, 1e-3f);
-  EXPECT_NEAR(lands.width, 300.f, 1e-3f);
+  EXPECT_NEAR(lands.width, 200.f, 1e-3f);
   EXPECT_NEAR(lands.height, 30.f, 1e-3f);
+  EXPECT_NEAR(artifacts.left, 200.f, 1e-3f);
+  EXPECT_NEAR(artifacts.top, 60.f, 1e-3f);
+  EXPECT_NEAR(artifacts.width, 100.f, 1e-3f);
   // Creatures take the top-left pair.
   EXPECT_NEAR(creatures.width, 200.f, 1e-3f);
   EXPECT_NEAR(creatures.top, 0.f, 1e-3f);

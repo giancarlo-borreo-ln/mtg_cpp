@@ -19,10 +19,10 @@ namespace mtgcpp::core {
 
 namespace {
 
-// Wire values for the five zones, indexed by the PlayerZone enum. Stored once
-// in static storage so callers can hold std::string_views over them safely.
+// Wire values for the six zones, indexed by the PlayerZone enum. Stored once in
+// static storage so callers can hold std::string_views over them safely.
 constexpr std::array<const char *, kPlayerZoneCount> kZoneNames{
-    "lands", "creatures", "instants_sorceries", "graveyard", "exile"};
+    "lands", "creatures", "instants_sorceries", "graveyard", "exile", "artifacts"};
 
 } // namespace
 
@@ -62,6 +62,9 @@ std::optional<PlayerZone> playerZoneFromString(std::string_view value) {
   }
   if (value == "exile") {
     return PlayerZone::Exile;
+  }
+  if (value == "artifacts") {
+    return PlayerZone::Artifacts;
   }
   return std::nullopt;
 }
@@ -128,9 +131,11 @@ std::vector<BoardCard> mintBoardCards(const std::vector<Card> &cards, PlayerSeat
   return expandInstances(cards, prefix);
 }
 
-// Zone routing is substring-based on the lowercase type line, land wins over
-// creature (e.g. "Land Creature — Insect"), everything else falls into the
-// shared instants/sorceries slot.
+// Zone routing is substring-based on the lowercase type line: land wins over
+// creature (e.g. "Land Creature — Insect"), creature wins over artifact (an
+// artifact creature is a creature), then artifacts get their own pile, and
+// everything else (instants/sorceries/enchantments) falls into the shared
+// spell slot.
 PlayerZone classifyZone(std::string_view type_line) {
   std::string lower(type_line);
   std::transform(lower.begin(), lower.end(), lower.begin(),
@@ -140,6 +145,9 @@ PlayerZone classifyZone(std::string_view type_line) {
   }
   if (lower.find("creature") != std::string::npos) {
     return PlayerZone::Creatures;
+  }
+  if (lower.find("artifact") != std::string::npos) {
+    return PlayerZone::Artifacts;
   }
   return PlayerZone::InstantsSorceries;
 }
@@ -310,16 +318,17 @@ SeatBoard createToken(PlayerSeat seat, const SeatBoard &seat_board, PlayerZone z
 
 std::string zoneLabel(PlayerZone zone) {
   static constexpr std::array<const char *, kPlayerZoneCount> kLabels{
-      "Lands", "Creatures", "Instants / Sorceries", "Graveyard", "Exile"};
+      "Lands", "Creatures", "Instants / Sorceries", "Graveyard", "Exile", "Artifacts"};
   return kLabels.at(static_cast<std::size_t>(zone));
 }
 
 // Fixed 3x3 CSS grid: creatures above lands (bottom row), instants/sorceries
-// above that, graveyard/exile on the right. Cell names match the zone wire ids.
+// above that, graveyard/exile on the right and artifacts beside the lands.
+// Cell names match the zone wire ids.
 std::string zoneGridTemplateAreas() {
   return "\"creatures creatures graveyard\" "
          "\"instants_sorceries instants_sorceries exile\" "
-         "\"lands lands lands\"";
+         "\"lands lands artifacts\"";
 }
 
 // One grid column per card, never zero columns (empty hand still needs a valid

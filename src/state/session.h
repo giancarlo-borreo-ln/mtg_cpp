@@ -18,10 +18,10 @@
 #include "core/board.h"
 #include "core/card.h"
 #include "net/client.h"
-#include "net/envelope.h"
 #include "state/board_state.h"
 
 #include <cstddef>
+#include <cstdint>
 #include <optional>
 #include <string>
 #include <string_view>
@@ -32,6 +32,17 @@ namespace mtgcpp::state {
 using mtgcpp::core::Deck;
 using mtgcpp::core::PlayerSeat;
 using mtgcpp::core::RevealCard;
+
+} // namespace mtgcpp::state
+
+// Forward declaration keeps this header free of nlohmann/json.hpp: the wire
+// envelope is an internal protocol type (net/envelope.h), only ever handled by
+// reference here.
+namespace mtgcpp::net {
+struct WsEnvelope;
+} // namespace mtgcpp::net
+
+namespace mtgcpp::state {
 
 class Session {
 public:
@@ -65,6 +76,28 @@ public:
   // A local battlefield action: applied locally, and sent to the opponent as a
   // `board_update` when it is one of the 7 syncable mutations.
   void applyLocalAction(const BoardAction &action);
+
+  // --- sandbox library ------------------------------------------------------
+  // Turn the chosen deck into a library the local player draws from and plays,
+  // instead of having it dealt onto the battlefield. Call after `chooseDeck`
+  // once the seat is known. Local-only: it never touches the wire.
+  void enterSandbox();
+  bool sandbox() const { return sandbox_; }
+
+  // The remaining library cards (board-card projections for the UI).
+  const std::vector<BoardCard> &library() const { return library_; }
+
+  // Draw the top library card into the hand. When the library empties it is
+  // refilled from the deck, so a sandbox can draw indefinitely.
+  void drawCard();
+
+  // Play a card from the local hand to its type-appropriate pile (lands /
+  // creatures / artifacts) or onto the shared Stack (instants, sorceries,
+  // enchantments).
+  void playCard(std::string_view card_id);
+
+  // Move a library card straight into play, removing it from the library.
+  void placeFromLibrary(std::string_view card_id);
 
   // Hand-reveal consent.
   void requestHandReveal();
@@ -102,8 +135,13 @@ public:
 
 private:
   void handleEnvelope(const mtgcpp::net::WsEnvelope &envelope);
-  void sendEnvelope(std::string_view event, nlohmann::json payload);
+  // `payload` is the already-serialized JSON object text (built by the caller
+  // from a nlohmann::json `.dump()`), so this header never names nlohmann.
+  void sendEnvelope(std::string_view event, std::string payload);
   void announceDeckIfNeeded();
+  // Re-derive the sandbox library from the chosen deck (fresh, collision-free
+  // instance ids). No-op before a seat and deck are known.
+  void buildLibrary();
 
   mtgcpp::net::Client &client_;
   BoardState board_;
@@ -116,6 +154,14 @@ private:
   RevealState reveal_;
   std::optional<std::string> error_;
   std::size_t board_updates_applied_ = 0;
+
+  // Sandbox library (local draw/play). `library_counter_` keeps instance ids
+  // unique across refills so tap/move by id always address one card. A request
+  // made before the seat is known is completed when the join lands.
+  bool sandbox_ = false;
+  bool sandbox_requested_ = false;
+  std::uint64_t library_counter_ = 0;
+  std::vector<BoardCard> library_;
 };
 
 } // namespace mtgcpp::state

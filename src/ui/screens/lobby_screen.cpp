@@ -53,6 +53,7 @@ void drawPanel(sf::RenderTarget &target, const sf::FloatRect &rect, sf::Color fi
 LobbyScreen::LobbyScreen() {
   createButton_.setLabel("Create Room");
   joinButton_.setLabel("Join Room");
+  sandboxButton_.setLabel("Sandbox");
   leaveButton_.setLabel("Leave");
   joinInput_.setPlaceholder("127.0.0.1:7500");
 }
@@ -65,7 +66,7 @@ CursorKind LobbyScreen::cursorAt(sf::Vector2f point) const {
     return CursorKind::Text;
   }
   if (createButton_.contains(point) || joinButton_.contains(point) ||
-      leaveButton_.contains(point)) {
+      sandboxButton_.contains(point) || leaveButton_.contains(point)) {
     return CursorKind::Hand;
   }
   for (const Button &button : deckButtons_) {
@@ -114,7 +115,16 @@ void LobbyScreen::setDecks(std::vector<DeckSummary> decks) {
   for (const DeckSummary &deck : decks_) {
     Button button;
     button.setLabel(deck.name);
-    button.setSubLabel(deck.format + " - " + std::to_string(deck.total_cards) + " cards");
+    // A deck must hold at least kDeckMinimumSize cards to be played; anything
+    // below that is shown in the picker but disabled, with the shortfall
+    // called out on the row so the player knows why it cannot be picked.
+    const bool playable = deck.total_cards >= kDeckMinimumSize;
+    std::string sub = deck.format + " - " + std::to_string(deck.total_cards) + " cards";
+    if (!playable) {
+      sub += " (needs " + std::to_string(kDeckMinimumSize) + ")";
+    }
+    button.setSubLabel(sub);
+    button.setEnabled(playable);
     deckButtons_.push_back(std::move(button));
   }
 }
@@ -152,7 +162,7 @@ void LobbyScreen::relayout(const sf::FloatRect &content, float scale) {
 
 void LobbyScreen::relayoutConnect(const sf::FloatRect &content, float scale) {
   const float panelWidth = std::min(content.width, 380.f * scale);
-  const float panelHeight = 230.f * scale;
+  const float panelHeight = 290.f * scale;
   connectPanel_ = {content.left + ((content.width - panelWidth) / 2.f),
                    content.top + ((content.height - panelHeight) / 2.f), panelWidth, panelHeight};
   const sf::FloatRect inner = inset(connectPanel_, kPad * scale);
@@ -161,16 +171,19 @@ void LobbyScreen::relayoutConnect(const sf::FloatRect &content, float scale) {
   createButton_.setPosition({inner.left, inner.top});
   createButton_.setSize({inner.width, 44.f * scale});
 
-  // "or" divider, then the join row at the bottom.
-  const float dividerY = inner.top + (64.f * scale);
-  const float joinTop = inner.top + (92.f * scale);
+  // "or" divider, then the join row in the middle.
+  const float joinTop = inner.top + (64.f * scale);
   const float joinHeight = 44.f * scale;
   const float joinButtonWidth = 110.f * scale;
   joinInput_.setPosition({inner.left, joinTop});
   joinInput_.setSize({inner.width - joinButtonWidth - (kGap * scale), joinHeight});
   joinButton_.setPosition({inner.left + inner.width - joinButtonWidth, joinTop});
   joinButton_.setSize({joinButtonWidth, joinHeight});
-  (void)dividerY;
+
+  // Sandbox at the bottom: a local-only, empty table for debugging. It never
+  // touches the network, so it stays usable with no relay and no opponent.
+  sandboxButton_.setPosition({inner.left, joinTop + joinHeight + (kGap * scale)});
+  sandboxButton_.setSize({inner.width, 44.f * scale});
 }
 
 void LobbyScreen::relayoutRoom(const sf::FloatRect &content, float scale) {
@@ -223,6 +236,9 @@ bool LobbyScreen::routeEvent(const sf::Event &event) {
     if (joinButton_.handleEvent(event)) {
       return true;
     }
+    if (sandboxButton_.handleEvent(event)) {
+      return true;
+    }
     return false;
   }
   if (leaveButton_.handleEvent(event)) {
@@ -242,6 +258,9 @@ LobbyAction LobbyScreen::pollAction() {
   if (!connected_) {
     if (createButton_.consumeClicked()) {
       return LobbyAction::CreateRoom;
+    }
+    if (sandboxButton_.consumeClicked()) {
+      return LobbyAction::Sandbox;
     }
     if (joinButton_.consumeClicked() || joinInput_.consumeSubmitted()) {
       // A join is ignored when the address is empty or all whitespace (the
@@ -282,6 +301,7 @@ void LobbyScreen::draw(sf::RenderTarget &target, const sf::Font &font,
     drawText(target, font, "or", connectPanel_, textSize, menuPalette().muted, true);
     joinInput_.draw(target, font);
     joinButton_.draw(target, boldFont, scale_);
+    sandboxButton_.draw(target, boldFont, scale_);
     if (error_.has_value()) {
       drawText(target, font, "Error: " + error_.value(), connectPanel_, smallSize,
                menuPalette().danger, true);

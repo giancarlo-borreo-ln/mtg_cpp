@@ -10,12 +10,12 @@
 
 #include "core/card_database.h"
 #include "core/check_cards.h"
+#include "core/data_paths.h"
 #include "store/deck_repository.h"
 #include "ui/app.h"
 
 #include <exception>
 #include <filesystem>
-#include <fstream>
 #include <iostream>
 #include <string_view>
 
@@ -61,22 +61,33 @@ std::filesystem::path executableDir() {
 // Missing files degrade to an empty database (the Deck Editor then shows a
 // "database not loaded" hint) rather than aborting the launch. The packaged
 // bundle ships `data/` next to the executable, so that location is preferred;
-// the source/build-tree `./data` is the fallback.
-void loadCardDatabase(mtgcpp::core::CardDatabase &db) {
+// the source/build-tree `./data` is the fallback. A binary sidecar cache in the
+// app-data dir skips the ~3 minute JSON parse on warm launches (it is keyed to
+// the JSONL's size + mtime, so a re-fetched database invalidates it).
+void loadCardDatabase(mtgcpp::core::CardDatabase &db, const mtgcpp::core::DataPaths &paths) {
   std::filesystem::path jsonl = "data/default-cards.jsonl";
   const std::filesystem::path bundled = executableDir() / "data" / "default-cards.jsonl";
   std::error_code ec;
   if (!bundled.empty() && std::filesystem::exists(bundled, ec) && !ec) {
     jsonl = bundled;
   }
-  std::ifstream in(jsonl);
-  if (!in) {
+  const std::filesystem::path cache = paths.cardDbCache();
+  if (!std::filesystem::exists(jsonl, ec) || ec) {
     std::cerr << "mtg_cpp: warning: " << jsonl.string()
               << " not found; Deck Editor card search is unavailable\n";
     return;
   }
-  std::clog << "mtg_cpp: loading card database (this can take a while)...";
-  const mtgcpp::core::CardDatabase::LoadResult result = db.load(in);
+  // A fresh (or invalidated) cache means a slow first parse; say so up front so
+  // the minutes-long JSONL pass is not mistaken for a hang.
+  const bool cachePresent =
+      std::filesystem::exists(cache, ec) && !ec && std::filesystem::file_size(cache, ec) > 0;
+  if (!cachePresent) {
+    std::clog << "mtg_cpp: parsing the card database (first launch, this can take a few "
+                 "minutes)...";
+  } else {
+    std::clog << "mtg_cpp: loading card database from cache...";
+  }
+  const mtgcpp::core::CardDatabase::LoadResult result = db.loadFromFile(jsonl, cache);
   std::clog << " " << result.loaded << " cards indexed (" << result.rejected
             << " malformed records skipped)\n";
 }
@@ -95,9 +106,10 @@ int main(int argc, char **argv) {
     // through it (and the profile store), never around it. The card database
     // is owned here and handed to the Deck Editor for offline search.
     mtgcpp::core::CardDatabase cardDb;
-    loadCardDatabase(cardDb);
-    mtgcpp::core::DeckRepository repository(mtgcpp::core::defaultDataDir());
-    mtgcpp::core::App app(MTG_CPP_VERSION, repository, cardDb, mtgcpp::core::defaultDataDir());
+    const mtgcpp::core::DataPaths paths = mtgcpp::core::DataPaths::defaultApp();
+    loadCardDatabase(cardDb, paths);
+    mtgcpp::core::DeckRepository repository(paths.root);
+    mtgcpp::core::App app(MTG_CPP_VERSION, repository, cardDb, paths.root);
     // Runtime card art: download on demand into the app-data art cache, with
     // the procedural fallback while offline / still downloading (M10.1).
     app.setArtCacheEnabled(true);

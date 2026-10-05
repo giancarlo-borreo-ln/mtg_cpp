@@ -158,7 +158,7 @@ App::App(std::string version, DeckRepository &decks, const CardDatabase &cards,
   hints_.setCharacterSize(14u);
   hints_.setLetterSpacing(0.5f);
   hints_.setFillColor(menuPalette().muted);
-  hints_.setString("1 Home | 2 Deck Editor | 3 Lobby | 4 Table | Esc Quit");
+  hints_.setString("1 Home | 2 Deck Editor | 3 Lobby | 4 Table | F11 Fullscreen | Esc Quit");
 
   // Restore the saved player (if any), then load their decks. Home starts on
   // the picker or the vault depending on what was stored.
@@ -220,7 +220,7 @@ void App::switchTo(Screen screen) {
   }
   // The Table renders the live session board; seed it on entry so a resize or
   // a re-entry never shows a stale battlefield.
-  if (screen_ == Screen::Table && lobbySession_ != nullptr) {
+  if (screen_ == Screen::Table && (lobbySession_ != nullptr || sandboxActive_)) {
     pumpTable();
   }
   // Update the two texts that depend on the active screen; their widths change
@@ -372,7 +372,42 @@ bool App::handleEventCore(const sf::Event &event) {
   return false;
 }
 
+void App::toggleFullscreen(sf::RenderWindow &window) {
+  fullscreen_ = !fullscreen_;
+
+  // SFML 2.6 has no runtime setStyle: toggling recreates the window. The
+  // render-window owns the OpenGL context, so every GPU texture must be
+  // released BEFORE the old context dies (their ids become stale) and rebuilt
+  // lazily afterwards by relayout()/pumpArt() on the new context.
+  table_.releaseTextures();
+  playmat_ = sf::Texture();
+  playmatSize_ = {0u, 0u};
+  appliedCursor_ = CursorKind::Arrow;
+
+  if (fullscreen_) {
+    windowedSize_ = windowSize_;
+    window.create(sf::VideoMode::getDesktopMode(), windowTitle(), sf::Style::Fullscreen);
+  } else {
+    window.create(sf::VideoMode({windowedSize_.x, windowedSize_.y}), windowTitle(),
+                  sf::Style::Default);
+  }
+
+  // The new window inherits none of the old window's setup.
+  window.setKeyRepeatEnabled(false);
+  sf::Image icon;
+  icon.create(64u, 64u);
+  paintAppIcon(icon);
+  window.setIcon(icon.getSize().x, icon.getSize().y, icon.getPixelsPtr());
+
+  windowSize_ = window.getSize();
+  relayout();
+}
+
 void App::handleEvent(sf::RenderWindow &window, const sf::Event &event) {
+  if (event.type == sf::Event::KeyPressed && event.key.code == sf::Keyboard::F11) {
+    toggleFullscreen(window);
+    return;
+  }
   if (event.type == sf::Event::Closed) {
     window.close();
     return;
@@ -734,6 +769,17 @@ void App::stopLobby() {
   refreshLobbyChrome();
 }
 
+void App::startSandbox() {
+  // A local-only, empty battlefield for debugging: no relay, no opponent, no
+  // deck requirement. Every table action is applied straight to the sandbox
+  // board; the reveal flow needs a peer, so it is a no-op here.
+  stopLobby();
+  sandboxActive_ = true;
+  sandboxBoard_ = state::initialBoardState();
+  table_.setRole(PlayerSeat::Host);
+  switchTo(Screen::Table);
+}
+
 void App::pumpLobby() {
   if (lobbySession_ == nullptr) {
     return;
@@ -796,14 +842,29 @@ void App::onLobbyAction(LobbyAction action) {
   case LobbyAction::JoinRoom:
     startLobbyAsGuest(lobby_.joinAddress());
     break;
+  case LobbyAction::Sandbox:
+    startSandbox();
+    break;
   case LobbyAction::ChooseDeck: {
-    // Load the picked deck from the repository and bring it to the table.
+    // Load the picked deck from the repository and bring it to the table. A
+    // deck must hold at least kDeckMinimumSize cards to be played; the picker
+    // already disables invalid decks, and this re-checks the loaded deck so a
+    // stale/forged pick can never reach the table.
     const std::optional<std::size_t> index = lobby_.deckIndex();
     if (index.has_value() && index.value() < lobby_.decks().size() && lobbySession_ != nullptr) {
       const std::variant<Deck, DeckReadError> loaded =
           decks_.read(lobby_.decks().at(index.value()).id);
       if (std::holds_alternative<Deck>(loaded)) {
-        lobbySession_->chooseDeck(std::get<Deck>(loaded));
+        const Deck &deck = std::get<Deck>(loaded);
+        // Derive the count from the cards, never trust the stored field: a
+        // deck edited before this rule (or a hand-built one) may carry a stale
+        // total even though the vault listing was derived fresh.
+        if (deriveSummary(deck).total_cards >= kDeckMinimumSize) {
+          lobbySession_->chooseDeck(deck);
+        } else {
+          lobby_.setError("Decks need at least " + std::to_string(kDeckMinimumSize) +
+                          " cards to join a room.");
+        }
       }
     }
     break;
@@ -815,6 +876,18 @@ void App::onLobbyAction(LobbyAction action) {
 }
 
 void App::pumpTable() {
+  if (sandboxActive_) {
+    // Local-only sandbox: push the sandbox board into the table and drain any
+    // finished art downloads; there is no wire to sync with.
+    table_.setBoard(sandboxBoard_);
+    table_.setRole(PlayerSeat::Host);
+    table_.setPlayerId("sandbox");
+    table_.setRevealRequest(std::nullopt);
+    table_.setRevealResult(std::nullopt, {});
+    table_.setError(std::nullopt);
+    table_.pumpArt();
+    return;
+  }
   if (lobbySession_ == nullptr) {
     return;
   }
@@ -844,6 +917,8 @@ void App::onTableAction(TableAction action) {
     // applying it locally also syncs it to the opponent.
     if (lobbySession_ != nullptr) {
       lobbySession_->applyLocalAction(table_.action());
+    } else if (sandboxActive_) {
+      sandboxBoard_ = state::applyAction(sandboxBoard_, table_.action());
     }
     break;
   case TableAction::RequestReveal:
@@ -872,6 +947,11 @@ void App::onTableAction(TableAction action) {
     }
     break;
   case TableAction::Leave:
+    if (sandboxActive_) {
+      sandboxActive_ = false;
+      switchTo(Screen::Lobby);
+      break;
+    }
     stopLobby();
     switchTo(Screen::Lobby);
     break;
@@ -885,6 +965,14 @@ void App::draw(sf::RenderWindow &window) {
   // full-window and rebuilt at the current size, and the menu chrome is
   // skipped (the table draws its own toolbar).
   window.clear(menuPalette().background);
+
+  // Keep the OS window title in sync with the active screen. The window is
+  // created once in run(); without this the title would claim the screen from
+  // launch time forever. setTitle is a cheap no-op when the string matches.
+  if (lastTitle_ != windowTitle()) {
+    lastTitle_ = windowTitle();
+    window.setTitle(lastTitle_);
+  }
 
   // Pointer shape follows the active screen's hover state (M10.3).
   const sf::Vector2i mouse = sf::Mouse::getPosition(window);

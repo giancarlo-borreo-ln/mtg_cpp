@@ -66,8 +66,4 @@ private:
 // printing-less cards dedupe by lowercased name.
 DeckSummary deriveSummary(const Deck &deck);
 
-// OS app-data directory for deck files: <data-dir>/mtg_cpp. Linux resolves
-// $XDG_DATA_HOME (or ~/.local/share), Windows %APPDATA%.
-std::filesystem::path defaultDataDir();
-
 } // namespace mtgcpp::core

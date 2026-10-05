@@ -6,6 +6,9 @@
 
 #include <gtest/gtest.h>
 
+#include <chrono>
+#include <filesystem>
+#include <fstream>
 #include <sstream>
 #include <string>
 #include <utility>
@@ -17,6 +20,31 @@ namespace mtgcpp::core {
 namespace {
 
 using nlohmann::json;
+
+// A throwaway directory removed on scope exit (fixture for the file-backed
+// cache tests).
+class TempDir {
+public:
+  TempDir() {
+    // Unique per construction (the pattern the other suites use): parallel ctest
+    // processes each start their own counter, so a shared one would collide.
+    const std::string unique =
+        std::to_string(std::chrono::steady_clock::now().time_since_epoch().count());
+    path_ = std::filesystem::temp_directory_path() / ("mtgcpp_cdb_" + unique);
+    std::filesystem::create_directories(path_);
+  }
+  ~TempDir() { std::filesystem::remove_all(path_); }
+
+  TempDir(const TempDir &) = delete;
+  TempDir &operator=(const TempDir &) = delete;
+  TempDir(TempDir &&) = delete;
+  TempDir &operator=(TempDir &&) = delete;
+
+  const std::filesystem::path &path() const { return path_; }
+
+private:
+  std::filesystem::path path_;
+};
 
 // A minimal valid Scryfall-shaped record for a concrete printing.
 json record(std::string name, std::string set, std::string number) {
@@ -381,6 +409,119 @@ TEST(CardDatabase, SearchCapsResultsAtTheLimit) {
 TEST(CardDatabase, SearchOfAnEmptyDatabaseReturnsNothing) {
   CardDatabase db;
   EXPECT_TRUE(db.search("anything").empty());
+}
+
+// ---------------------------------------------------------------------------
+// Binary sidecar cache (M12.3): warm launches skip the JSONL parse.
+// ---------------------------------------------------------------------------
+
+// Write a small JSONL fixture to disk (3 records: a rich DFC + two printings).
+std::filesystem::path writeFixtureJsonl(const std::filesystem::path &dir) {
+  const std::filesystem::path jsonl = dir / "cards.jsonl";
+  std::ofstream out(jsonl);
+  out << lineOf(richRecord()) << "\n";
+  out << lineOf(record("Forest", "war", "263")) << "\n";
+  out << lineOf(record("Bolt", "war", "103")) << "\n";
+  return jsonl;
+}
+
+TEST(CardDatabase, WriteCacheThenReadCacheRoundTripsEveryField) {
+  TempDir tmp;
+  const std::filesystem::path jsonl = writeFixtureJsonl(tmp.path());
+  const std::filesystem::path cache = tmp.path() / "cards.mtgdb";
+
+  CardDatabase db;
+  EXPECT_EQ(db.loadFromFile(jsonl, cache).loaded, 3u);
+  EXPECT_TRUE(std::filesystem::exists(cache));
+  EXPECT_EQ(db.size(), 3u);
+
+  // A fresh instance loads from the sidecar: same index, zero rejects.
+  CardDatabase cached;
+  const CardDatabase::LoadResult result = cached.loadFromFile(jsonl, cache);
+  EXPECT_EQ(result.loaded, 3u);
+  EXPECT_EQ(result.rejected, 0u);
+  EXPECT_EQ(cached.size(), 3u);
+
+  // Every field survives the round-trip (rich record: faces, cmc, colors...).
+  const Card original = mustFind(db, "znr", "51a");
+  const Card copy = mustFind(cached, "ZNR", "51A");
+  EXPECT_EQ(copy, original);
+
+  // The name index preserves the first-loaded representative printing.
+  EXPECT_EQ(mustFindName(cached, "AKOUM WARRIOR // AKOUM TEETH").set_code, "znr");
+  EXPECT_EQ(mustFindName(cached, "bolt").collector_number, "103");
+}
+
+TEST(CardDatabase, AStaleCacheIsIgnoredAndRebuilt) {
+  TempDir tmp;
+  const std::filesystem::path jsonl = writeFixtureJsonl(tmp.path());
+  const std::filesystem::path cache = tmp.path() / "cards.mtgdb";
+
+  CardDatabase db;
+  db.loadFromFile(jsonl, cache);
+
+  // Change the source file so size+mtime no longer match the cached header.
+  {
+    std::ofstream out(jsonl, std::ios::app);
+    out << lineOf(record("Shock", "war", "104")) << "\n";
+  }
+  std::error_code ec;
+  const std::filesystem::file_time_type stamp =
+      std::filesystem::last_write_time(jsonl) + std::chrono::seconds(2);
+  std::filesystem::last_write_time(jsonl, stamp, ec);
+
+  CardDatabase reloaded;
+  const CardDatabase::LoadResult result = reloaded.loadFromFile(jsonl, cache);
+  EXPECT_EQ(result.loaded, 4u); // the new record is parsed, not served stale
+  EXPECT_EQ(mustFind(reloaded, "war", "104").name, "Shock");
+}
+
+TEST(CardDatabase, ACorruptCacheFileDegradesToAReParse) {
+  TempDir tmp;
+  const std::filesystem::path jsonl = writeFixtureJsonl(tmp.path());
+  const std::filesystem::path cache = tmp.path() / "cards.mtgdb";
+
+  // Garbage at the cache path (truncated / tampered) must not crash the load.
+  {
+    std::ofstream out(cache, std::ios::binary);
+    out << "not a magic header";
+  }
+  CardDatabase db;
+  const CardDatabase::LoadResult result = db.loadFromFile(jsonl, cache);
+  EXPECT_EQ(result.loaded, 3u);
+  EXPECT_EQ(mustFind(db, "znr", "51a").name, "Akoum Warrior // Akoum Teeth");
+}
+
+TEST(CardDatabase, ATruncatedCacheTailDegradesToAReParse) {
+  TempDir tmp;
+  const std::filesystem::path jsonl = writeFixtureJsonl(tmp.path());
+  const std::filesystem::path cache = tmp.path() / "cards.mtgdb";
+
+  CardDatabase db;
+  db.loadFromFile(jsonl, cache);
+
+  // Truncate the sidecar to just the header: the card loop reads past the end.
+  std::error_code ec;
+  std::filesystem::resize_file(cache, 32, ec);
+
+  CardDatabase reloaded;
+  const CardDatabase::LoadResult result = reloaded.loadFromFile(jsonl, cache);
+  EXPECT_EQ(result.loaded, 3u);
+  EXPECT_EQ(mustFind(reloaded, "war", "263").name, "Forest");
+}
+
+TEST(CardDatabase, WriteCacheToAnUnwritableDirIsAFailureNotACrash) {
+  TempDir tmp;
+  const std::filesystem::path jsonl = writeFixtureJsonl(tmp.path());
+  // A path under a regular file can never be a directory.
+  const std::filesystem::path notDir = tmp.path() / "blocker";
+  {
+    std::ofstream out(notDir);
+    out << "x";
+  }
+  CardDatabase db;
+  EXPECT_EQ(db.loadFromFile(jsonl, notDir / "nested" / "cache.mtgdb").loaded, 3u);
+  EXPECT_FALSE(db.writeCache(notDir / "nested" / "cache.mtgdb", 123u, 456u));
 }
 
 } // namespace

@@ -90,12 +90,13 @@ void setConnectedRoom(LobbyScreen &lobby) {
   lobby.setShareAddress("192.168.1.10:7500");
 }
 
-DeckSummary summaryOf(const std::string &id, const std::string &name) {
+DeckSummary summaryOf(const std::string &id, const std::string &name,
+                      int total = kDeckMinimumSize) {
   DeckSummary summary;
   summary.id = id;
   summary.name = name;
   summary.format = "Standard";
-  summary.total_cards = 8;
+  summary.total_cards = total;
   summary.unique_cards = 2;
   return summary;
 }
@@ -155,6 +156,33 @@ TEST(LobbyScreen, ChooseDeckReportsTheClickedDeckIndex) {
 
   EXPECT_EQ(click(lobby, center(lobby.deckButtons().at(1).bounds())), LobbyAction::ChooseDeck);
   EXPECT_EQ(lobby.deckIndex(), std::optional<std::size_t>(1));
+}
+
+TEST(LobbyScreen, DecksUnderTheMinimumSizeCannotBeChosen) {
+  LobbyScreen lobby;
+  setConnectedRoom(lobby);
+  // dA is legal (60 cards), dB is not (8 cards).
+  lobby.setDecks({summaryOf("dA", "Legal Deck"), summaryOf("dB", "Tiny Deck", 8)});
+  lobby.relayout(contentRect(), 1.f);
+  ASSERT_EQ(lobby.deckButtons().size(), 2u);
+
+  EXPECT_TRUE(lobby.deckPlayable(0));
+  EXPECT_FALSE(lobby.deckPlayable(1));
+  EXPECT_TRUE(lobby.deckButtons().at(0).isEnabled());
+  EXPECT_FALSE(lobby.deckButtons().at(1).isEnabled()); // disabled rows ignore clicks
+
+  EXPECT_EQ(click(lobby, center(lobby.deckButtons().at(1).bounds())), LobbyAction::None);
+  EXPECT_FALSE(lobby.deckIndex().has_value());
+
+  // The legal deck still reports a ChooseDeck.
+  EXPECT_EQ(click(lobby, center(lobby.deckButtons().at(0).bounds())), LobbyAction::ChooseDeck);
+}
+
+TEST(LobbyScreen, SandboxButtonReportsSandbox) {
+  LobbyScreen lobby;
+  lobby.relayout(contentRect(), 1.f);
+
+  EXPECT_EQ(click(lobby, center(lobby.sandboxButton().bounds())), LobbyAction::Sandbox);
 }
 
 TEST(LobbyScreen, LeaveButtonReportsLeaveRoom) {

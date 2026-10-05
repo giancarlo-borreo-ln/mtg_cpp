@@ -172,6 +172,18 @@ const sf::Texture *TableScreen::artTextureFor(const BoardCard &card) const {
   return it == artTextures_.end() ? nullptr : &it->second;
 }
 
+void TableScreen::releaseTextures() {
+  // Reset the textures to empty (their destructors delete the GL ids in the
+  // current context) so the next relayout rebuilds them on the new context.
+  frontTex_ = sf::Texture();
+  backTex_ = sf::Texture();
+  tokenTex_ = sf::Texture();
+  tileTex_ = sf::Texture();
+  ringTex_ = sf::Texture();
+  textureSize_ = {0u, 0u};
+  artTextures_.clear();
+}
+
 std::vector<RevealCard> TableScreen::revealCards() const {
   return toRevealCards(board_.seats.at(seatIndex(mySeat())).hand);
 }
@@ -548,9 +560,21 @@ bool TableScreen::keyPressed(sf::Event::KeyEvent key) {
     case sf::Keyboard::Num7:
     case sf::Keyboard::Num8:
     case sf::Keyboard::Num9:
+    case sf::Keyboard::Numpad0:
+    case sf::Keyboard::Numpad1:
+    case sf::Keyboard::Numpad2:
+    case sf::Keyboard::Numpad3:
+    case sf::Keyboard::Numpad4:
+    case sf::Keyboard::Numpad5:
+    case sf::Keyboard::Numpad6:
+    case sf::Keyboard::Numpad7:
+    case sf::Keyboard::Numpad8:
+    case sf::Keyboard::Numpad9:
       if (lifeEditText_.size() < 4) {
         // The first digit replaces the prefilled current value.
-        const char digit = static_cast<char>('0' + (key.code - sf::Keyboard::Num0));
+        const bool numpad = key.code >= sf::Keyboard::Numpad0;
+        const char digit = static_cast<char>(
+            '0' + (numpad ? (key.code - sf::Keyboard::Numpad0) : (key.code - sf::Keyboard::Num0)));
         if (lifeEditText_ == lifeEditOriginal_) {
           lifeEditText_ = std::string(1, digit);
         } else {

@@ -2,11 +2,14 @@
 #include "state/session.h"
 
 #include "core/card_serialization.h"
+#include "net/envelope.h"
 #include "net/server.h"
 #include "state/sync.h"
 
+#include <algorithm>
 #include <chrono>
 #include <optional>
+#include <random>
 #include <string>
 #include <string_view>
 #include <utility>
@@ -88,24 +91,120 @@ void Session::applyLocalAction(const BoardAction &action) {
   }
   const std::optional<nlohmann::json> payload = toBoardUpdatePayload(action);
   if (payload.has_value() && connected()) {
-    sendEnvelope(mtgcpp::net::WSEvents::kBoardUpdate, payload.value());
+    sendEnvelope(mtgcpp::net::WSEvents::kBoardUpdate, payload.value().dump());
+  }
+}
+
+void Session::enterSandbox() {
+  sandbox_requested_ = true;
+  sandbox_ = true; // the UI switches to the sandbox layout immediately
+  if (!role_.has_value() || !my_deck_.has_value()) {
+    return; // the library is built when the join/deck lands
+  }
+  const PlayerSeat seat = role_.value();
+  board_ = initialBoardState();
+  board_ = applyAction(board_, setMyDeck(seat, my_deck_.value()));
+  // Undo the deal: the sandbox starts with an empty battlefield and a full
+  // library to draw from and play.
+  board_ = applyAction(board_, setSeatHand(seat, {}));
+  for (const PlayerZone zone : mtgcpp::core::kPlayerZones) {
+    board_ = applyAction(board_, setSeatZone(seat, zone, {}));
+  }
+  buildLibrary();
+}
+
+void Session::buildLibrary() {
+  if (!role_.has_value() || !my_deck_.has_value()) {
+    return;
+  }
+  const PlayerSeat seat = role_.value();
+  std::vector<BoardCard> cards = mtgcpp::core::mintBoardCards(my_deck_->cards, seat);
+  // Shuffle so the sandbox draws a random order, then stamp fresh ids.
+  std::mt19937 rng(std::random_device{}());
+  std::shuffle(cards.begin(), cards.end(), rng);
+  for (BoardCard &card : cards) {
+    card.id = playerSeatToString(seat) + "-lib-" + std::to_string(++library_counter_);
+  }
+  library_ = std::move(cards);
+}
+
+void Session::drawCard() {
+  if (!sandbox_ || !role_.has_value()) {
+    return;
+  }
+  if (library_.empty()) {
+    buildLibrary(); // refill: a sandbox can draw indefinitely
+  }
+  if (library_.empty()) {
+    return;
+  }
+  const PlayerSeat seat = role_.value();
+  BoardCard card = library_.front();
+  library_.erase(library_.begin());
+  std::vector<BoardCard> hand = board_.seats.at(seatIndex(seat)).hand;
+  hand.push_back(std::move(card));
+  applyLocalAction(setSeatHand(seat, hand));
+}
+
+void Session::playCard(std::string_view card_id) {
+  if (!sandbox_ || !role_.has_value()) {
+    return;
+  }
+  const PlayerSeat seat = role_.value();
+  const SeatBoard &current = board_.seats.at(seatIndex(seat));
+  const auto found = std::find_if(current.hand.begin(), current.hand.end(),
+                                  [card_id](const BoardCard &card) { return card.id == card_id; });
+  if (found == current.hand.end()) {
+    return;
+  }
+  const PlayerZone zone = mtgcpp::core::classifyZone(found->type_line);
+  if (zone == PlayerZone::InstantsSorceries) {
+    // Instants, sorceries and enchantments go straight onto the Stack.
+    applyLocalAction(moveCardToStack(std::string(card_id)));
+  } else {
+    applyLocalAction(moveCardToZone(seat, std::string(card_id), zone));
+  }
+}
+
+void Session::placeFromLibrary(std::string_view card_id) {
+  if (!sandbox_ || !role_.has_value()) {
+    return;
+  }
+  const PlayerSeat seat = role_.value();
+  const auto found = std::find_if(library_.begin(), library_.end(),
+                                  [card_id](const BoardCard &card) { return card.id == card_id; });
+  if (found == library_.end()) {
+    return;
+  }
+  BoardCard card = *found;
+  library_.erase(found);
+  const PlayerZone zone = mtgcpp::core::classifyZone(card.type_line);
+  if (zone == PlayerZone::InstantsSorceries) {
+    applyLocalAction(pushToStack(std::move(card)));
+  } else {
+    // Route through the hand so the same (syncable) move path handles it.
+    std::vector<BoardCard> hand = board_.seats.at(seatIndex(seat)).hand;
+    hand.push_back(std::move(card));
+    board_ = applyAction(board_, setSeatHand(seat, hand));
+    playCard(hand.back().id);
   }
 }
 
 void Session::requestHandReveal() {
   reveal_.revealed_hand.clear();
   reveal_.reveal_accepted.reset();
-  sendEnvelope(mtgcpp::net::WSEvents::kRequestHandReveal, nlohmann::json::object());
+  sendEnvelope(mtgcpp::net::WSEvents::kRequestHandReveal, nlohmann::json::object().dump());
 }
 
 void Session::acceptHandReveal(const std::vector<RevealCard> &cards) {
   reveal_.pending_request_from.reset();
-  sendEnvelope(mtgcpp::net::WSEvents::kHandRevealAccept, {{"cards", revealCardsToJson(cards)}});
+  sendEnvelope(mtgcpp::net::WSEvents::kHandRevealAccept,
+               nlohmann::json{{"cards", revealCardsToJson(cards)}}.dump());
 }
 
 void Session::denyHandReveal() {
   reveal_.pending_request_from.reset();
-  sendEnvelope(mtgcpp::net::WSEvents::kHandRevealDeny, nlohmann::json::object());
+  sendEnvelope(mtgcpp::net::WSEvents::kHandRevealDeny, nlohmann::json::object().dump());
 }
 
 void Session::dismissRevealPrompt() { reveal_.pending_request_from.reset(); }
@@ -125,6 +224,10 @@ void Session::leave() {
   their_deck_.reset();
   reveal_ = RevealState{};
   error_.reset();
+  sandbox_ = false;
+  sandbox_requested_ = false;
+  library_counter_ = 0;
+  library_.clear();
 }
 
 void Session::handleEnvelope(const WsEnvelope &envelope) {
@@ -147,6 +250,10 @@ void Session::handleEnvelope(const WsEnvelope &envelope) {
     // the seat is known; announcing after a join also covers late choices.
     if (role_.has_value() && my_deck_.has_value()) {
       board_ = applyAction(board_, setMyDeck(role_.value(), my_deck_.value()));
+    }
+    // A sandbox request made before the seat was known completes now.
+    if (sandbox_requested_) {
+      enterSandbox();
     }
     announceDeckIfNeeded();
     return;
@@ -239,13 +346,19 @@ void Session::handleEnvelope(const WsEnvelope &envelope) {
   }
 }
 
-void Session::sendEnvelope(std::string_view event, nlohmann::json payload) {
+void Session::sendEnvelope(std::string_view event, std::string payload) {
   if (!player_id_.has_value() || !connected()) {
     return;
   }
-  client_.sendEnvelope(WsEnvelope{std::string(event),
-                                  std::string(mtgcpp::net::Server::kDefaultRoom),
-                                  player_id_.value(), std::move(payload)});
+  WsEnvelope envelope;
+  envelope.event = std::string(event);
+  envelope.room = std::string(mtgcpp::net::Server::kDefaultRoom);
+  envelope.from = player_id_.value();
+  // The payload is JSON text we built ourselves (a `.dump()` above), so parse
+  // cannot fail; this keeps the header free of nlohmann while WsEnvelope still
+  // carries a typed object.
+  envelope.payload = nlohmann::json::parse(std::move(payload));
+  client_.sendEnvelope(envelope);
 }
 
 void Session::announceDeckIfNeeded() {
@@ -253,8 +366,9 @@ void Session::announceDeckIfNeeded() {
     return;
   }
   sendEnvelope(mtgcpp::net::WSEvents::kDeckSelected,
-               {{"seat", playerSeatToString(role_.value())},
-                {"deck", mtgcpp::core::deckToJson(my_deck_.value())}});
+               nlohmann::json{{"seat", playerSeatToString(role_.value())},
+                              {"deck", mtgcpp::core::deckToJson(my_deck_.value())}}
+                   .dump());
 }
 
 } // namespace mtgcpp::state

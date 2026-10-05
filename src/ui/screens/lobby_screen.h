@@ -44,6 +44,7 @@ enum class LobbyAction {
   CreateRoom, // start the embedded relay and join it locally as host
   JoinRoom,   // join the address in joinAddress() as guest
   ChooseDeck, // deckIndex() holds the deck to bring to the table
+  Sandbox,    // start a local-only, empty table (debugging, no network)
   LeaveRoom,
 };
 
@@ -90,6 +91,13 @@ public:
   // setDecks / setMyDeckName).
   std::optional<std::size_t> deckIndex() const { return deckIndex_; }
 
+  // True when the deck at `index` is legal to bring to the table (>= the 60-card
+  // minimum). Invalid decks are disabled in the picker; this lets the App run
+  // the same check when a ChooseDeck action arrives.
+  bool deckPlayable(std::size_t index) const {
+    return index < decks_.size() && decks_.at(index).total_cards >= kDeckMinimumSize;
+  }
+
   // True once the room is ready AND both decks are known: the table can start.
   // The App watches this and switches to the table on the rising edge.
   bool canStartTable() const;
@@ -111,6 +119,7 @@ public:
   const Button &createButton() const { return createButton_; }
   const Button &joinButton() const { return joinButton_; }
   const TextInput &joinInput() const { return joinInput_; }
+  const Button &sandboxButton() const { return sandboxButton_; }
   const Button &leaveButton() const { return leaveButton_; }
   // The deck-picker buttons (only meaningful while the picker is shown).
   const std::vector<Button> &deckButtons() const { return deckButtons_; }
@@ -140,6 +149,7 @@ private:
   Button createButton_;
   TextInput joinInput_;
   Button joinButton_;
+  Button sandboxButton_;
   sf::FloatRect connectPanel_{0.f, 0.f, 0.f, 0.f};
 
   // Room panel.

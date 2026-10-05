@@ -408,7 +408,9 @@ DeckEditorAction DeckEditorScreen::pollAction() {
     if (exportButton_.consumeClicked()) {
       setAction(DeckEditorAction::ExportToClipboard);
     }
-    if (saveButton_.consumeClicked()) {
+    if (saveButton_.consumeClicked() || deckNameInput_.consumeSubmitted()) {
+      // Save via the button OR Enter in the deck-name field (which previously
+      // queued a submit nobody drained, so Enter silently did nothing).
       setAction(DeckEditorAction::SaveDeck);
     }
     // Entering the import view is a pure view change (no App involvement).

@@ -50,6 +50,31 @@ void TextArea::backspace() {
   caret_ -= 1;
 }
 
+void TextArea::eraseAtCaret() {
+  if (caret_ < text_.size()) {
+    text_.erase(caret_, 1);
+  }
+}
+
+void TextArea::pasteFromClipboard() {
+  // The OS clipboard is a UTF-32 sf::String; this area is ASCII-only, so drop
+  // every codepoint outside printable ASCII but KEEP newlines so a pasted
+  // Arena export arrives line-by-line like the docs promise.
+  const sf::String clip = clipboardReader()();
+  std::string ascii;
+  ascii.reserve(clip.getSize());
+  for (const sf::Uint32 code : clip) {
+    if (code == '\n') {
+      ascii.push_back('\n');
+    } else if (code >= 0x20 && code <= 0x7e) {
+      ascii.push_back(static_cast<char>(code));
+    }
+  }
+  if (!ascii.empty()) {
+    insert(ascii);
+  }
+}
+
 void TextArea::moveCaretLeft() {
   if (caret_ > 0) {
     caret_ -= 1;
@@ -86,6 +111,7 @@ void TextArea::moveCaretUp() {
   const std::size_t previousStart = lineStartOf(lineStart - 1);
   const std::size_t previousEnd = lineEndOf(previousStart);
   caret_ = std::min(previousStart + column, previousEnd);
+  ensureCaretVisible();
 }
 
 void TextArea::moveCaretDown() {
@@ -98,9 +124,32 @@ void TextArea::moveCaretDown() {
   const std::size_t nextStart = lineEnd + 1;
   const std::size_t nextEnd = lineEndOf(nextStart);
   caret_ = std::min(nextStart + column, nextEnd);
+  ensureCaretVisible();
 }
 
+void TextArea::moveCaretToLineStart() { caret_ = lineStartOf(caret_); }
+
+void TextArea::moveCaretToLineEnd() { caret_ = lineEndOf(caret_); }
+
 void TextArea::setCaret(std::size_t index) { caret_ = std::min(index, text_.size()); }
+
+std::size_t TextArea::caretLine() const {
+  // The caret's 1-based line = 1 + the newlines before the caret.
+  const auto caretOffset = static_cast<std::string::difference_type>(caret_);
+  return static_cast<std::size_t>(1 + std::count(text_.begin(), text_.begin() + caretOffset, '\n'));
+}
+
+void TextArea::ensureCaretVisible() {
+  // `visible` is 1 at minimum so a tall offset cannot scroll past the content.
+  const std::size_t visible =
+      std::max<std::size_t>(1, static_cast<std::size_t>(size_.y / kLineHeight));
+  const std::size_t line = caretLine();
+  if (line < lineOffset_ + 1) {
+    lineOffset_ = line - 1; // scrolled past the caret: jump it into view
+  } else if (line > lineOffset_ + visible) {
+    lineOffset_ = line - visible; // caret below the fold: reveal it
+  }
+}
 
 void TextArea::setFocused(bool focused) { focused_ = focused; }
 
@@ -175,6 +224,9 @@ bool TextArea::handleEvent(const sf::Event &event) {
     case sf::Keyboard::Backspace:
       backspace();
       break;
+    case sf::Keyboard::Delete:
+      eraseAtCaret();
+      break;
     case sf::Keyboard::Enter:
       newline(); // Enter inserts a line in a text area (never submits)
       break;
@@ -189,6 +241,17 @@ bool TextArea::handleEvent(const sf::Event &event) {
       break;
     case sf::Keyboard::Down:
       moveCaretDown();
+      break;
+    case sf::Keyboard::Home:
+      moveCaretToLineStart();
+      break;
+    case sf::Keyboard::End:
+      moveCaretToLineEnd();
+      break;
+    case sf::Keyboard::V:
+      if (event.key.control) {
+        pasteFromClipboard();
+      }
       break;
     default:
       break; // every other key is swallowed so screens do not react to typing

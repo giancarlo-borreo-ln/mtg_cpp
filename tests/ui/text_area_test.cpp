@@ -3,10 +3,12 @@
 // display needed (draw is verified in the running app).
 
 #include "ui/widgets/text_area.h"
+#include "ui/widgets/widget.h"
 
 #include <gtest/gtest.h>
 
 #include <cstddef>
+#include <functional>
 #include <string>
 
 #include <SFML/Window/Event.hpp>
@@ -216,6 +218,97 @@ TEST(TextArea, WheelScrollingMovesTheLineOffsetOverTheCursor) {
   EXPECT_EQ(area.lineOffset(), 0u);
   // Outside the field the wheel is not consumed.
   EXPECT_FALSE(wheel(-1.f, 300.f, 300.f));
+}
+
+TEST(TextArea, CtrlVPastesTheArenaExportKeepingNewlines) {
+  // Inject a fake clipboard reader so paste is verifiable without a display.
+  struct Restore {
+    explicit Restore(ClipboardReader r) : saved(std::move(r)) {}
+    ClipboardReader saved;
+    ~Restore() { clipboardReader() = saved; }
+    Restore(const Restore &) = delete;
+    Restore &operator=(const Restore &) = delete;
+    Restore(Restore &&) = delete;
+    Restore &operator=(Restore &&) = delete;
+  } restore{clipboardReader()};
+  clipboardReader() = [] { return sf::String("2 Grizzly Bears\n1 Lightning Bolt"); };
+
+  TextArea area;
+  area.setPosition({0.f, 0.f});
+  area.setSize({200.f, 100.f});
+  area.setFocused(true);
+
+  sf::Event paste{};
+  paste.type = sf::Event::KeyPressed;
+  paste.key.code = sf::Keyboard::V;
+  paste.key.control = true;
+  EXPECT_TRUE(area.handleEvent(paste));
+  EXPECT_EQ(area.text(), "2 Grizzly Bears\n1 Lightning Bolt");
+  EXPECT_EQ(area.caret(), area.text().size()); // caret follows to the end
+}
+
+TEST(TextArea, CtrlVPastesAtTheCaretNotJustTheEnd) {
+  struct Restore {
+    explicit Restore(ClipboardReader r) : saved(std::move(r)) {}
+    ClipboardReader saved;
+    ~Restore() { clipboardReader() = saved; }
+    Restore(const Restore &) = delete;
+    Restore &operator=(const Restore &) = delete;
+    Restore(Restore &&) = delete;
+    Restore &operator=(Restore &&) = delete;
+  } restore{clipboardReader()};
+  clipboardReader() = [] { return sf::String("zz"); };
+
+  TextArea area;
+  area.setText("ab");
+  area.setCaret(1);
+
+  area.pasteFromClipboard();
+  EXPECT_EQ(area.text(), "azzb");
+  EXPECT_EQ(area.caret(), 3u);
+}
+
+TEST(TextArea, DeleteErasesTheCharacterAtTheCaret) {
+  TextArea area;
+  area.setText("ab\ncd");
+  area.setCaret(3); // on 'c', just past the newline
+  area.eraseAtCaret();
+  EXPECT_EQ(area.text(), "ab\nd");
+  area.setCaret(2); // on the newline itself
+  area.eraseAtCaret();
+  EXPECT_EQ(area.text(), "abd");
+}
+
+TEST(TextArea, HomeAndEndJumpToTheLineEdges) {
+  TextArea area;
+  area.setText("abc\ndef");
+  area.setCaret(5); // on the second line, after 'd'
+  area.moveCaretToLineStart();
+  EXPECT_EQ(area.caret(), 4u); // start of the second line
+  area.moveCaretToLineEnd();
+  EXPECT_EQ(area.caret(), 7u); // end of the second line
+}
+
+TEST(TextArea, CaretMovementScrollsTheViewToKeepItVisible) {
+  TextArea area;
+  area.setPosition({0.f, 0.f});
+  area.setSize({200.f, 100.f}); // 100 / 18 => 5 visible lines
+  area.setText("1\n2\n3\n4\n5\n6\n7\n8");
+  EXPECT_EQ(area.lineOffset(), 0u);
+
+  // Walk the caret to the last line: the view scrolls so it stays visible.
+  area.setCaret(0);
+  for (int i = 0; i < 7; ++i) {
+    area.moveCaretDown();
+  }
+  EXPECT_GE(area.lineOffset(), 3u); // 8 lines - 5 visible
+
+  // Walk back to the first line: the view scrolls back to the top.
+  area.moveCaretToLineStart();
+  for (int i = 0; i < 7; ++i) {
+    area.moveCaretUp();
+  }
+  EXPECT_EQ(area.lineOffset(), 0u);
 }
 
 } // namespace

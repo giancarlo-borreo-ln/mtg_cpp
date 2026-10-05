@@ -28,7 +28,7 @@ std::string playerSeatToString(PlayerSeat seat);
 std::optional<PlayerSeat> playerSeatFromString(std::string_view value);
 
 // The rigid battle zones available on each player's board half.
-enum class PlayerZone { Lands, Creatures, InstantsSorceries, Graveyard, Exile };
+enum class PlayerZone { Lands, Creatures, InstantsSorceries, Graveyard, Exile, Artifacts };
 
 std::string playerZoneToString(PlayerZone zone);
 std::optional<PlayerZone> playerZoneFromString(std::string_view value);
@@ -36,7 +36,7 @@ std::optional<PlayerZone> playerZoneFromString(std::string_view value);
 // All zones in rendering order (grid placement is fixed via the layout math).
 inline constexpr std::array kPlayerZones{PlayerZone::Lands, PlayerZone::Creatures,
                                          PlayerZone::InstantsSorceries, PlayerZone::Graveyard,
-                                         PlayerZone::Exile};
+                                         PlayerZone::Exile, PlayerZone::Artifacts};
 
 inline constexpr std::size_t kPlayerZoneCount = kPlayerZones.size();
 

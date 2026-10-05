@@ -410,7 +410,5 @@ TEST(DeriveSummary, HandlesEmptyCards) {
   EXPECT_FALSE(summary.preview_image.has_value());
 }
 
-TEST(DefaultDataDir, ReturnsANonEmptyPath) { EXPECT_FALSE(defaultDataDir().empty()); }
-
 } // namespace
 } // namespace mtgcpp::core

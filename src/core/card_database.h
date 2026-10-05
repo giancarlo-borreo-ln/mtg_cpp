@@ -12,6 +12,8 @@
 #include "core/card.h"
 
 #include <cstddef>
+#include <cstdint>
+#include <filesystem>
 #include <iosfwd>
 #include <optional>
 #include <string>
@@ -34,6 +36,21 @@ public:
   // Stream the bulk JSONL: validate + convert every record, skip malformed
   // ones. Index keys are lowercased so lookups are case-insensitive.
   LoadResult load(std::istream &stream);
+
+  // Load from `jsonlPath`, using a binary sidecar cache at `cachePath` when it
+  // matches the source file (same size + mtime). A cold cache parses the JSONL
+  // the slow way, then writes the sidecar so the NEXT launch skips the ~3
+  // minute parse. A corrupt/stale cache is discarded and rebuilt, never fatal.
+  LoadResult loadFromFile(const std::filesystem::path &jsonlPath,
+                          const std::filesystem::path &cachePath);
+
+  // Write the current index to the binary sidecar format (used by
+  // loadFromFile to warm the cache after a slow parse). `sourceSize` /
+  // `sourceMtime` identify the JSONL the index came from, so a changed source
+  // invalidates the cache. Returns false when the file cannot be written
+  // (read-only dir) — the caller keeps running from memory.
+  bool writeCache(const std::filesystem::path &path, std::uint64_t sourceSize,
+                  std::uint64_t sourceMtime) const;
 
   // Exact printing lookup by (set, collector_number), case-insensitive.
   std::optional<Card> findByPrinting(std::string_view set, std::string_view collectorNumber) const;
@@ -64,11 +81,32 @@ public:
   bool empty() const { return byPrinting_.empty(); }
 
 private:
-  // `lower(set)|lower(collector_number)` → printing. Last loaded wins for a
-  // duplicate key.
-  std::unordered_map<std::string, Card> byPrinting_;
-  // `lower(name)` → representative printing (first loaded wins).
-  std::unordered_map<std::string, Card> byName_;
+  // The actual card storage: one Card per printing, in load order. The two
+  // indexes below map a lookup key to an index here, so a printing is never
+  // deep-copied per index — the bulk JSONL parse already pays that cost once.
+  std::vector<Card> cards_;
+  // `lower(set)|lower(collector_number)` → index into `cards_`. Last loaded
+  // wins for a duplicate key (its slot is appended, then the index re-points).
+  std::unordered_map<std::string, std::size_t> byPrinting_;
+  // `lower(name)` → index into `cards_` of the representative printing (first
+  // loaded wins).
+  std::unordered_map<std::string, std::size_t> byName_;
+
+  // Try to fill the index from the binary sidecar. Returns false when the file
+  // is missing, stale, or malformed (the caller then falls back to a slow JSON
+  // parse). On success `rejected` is 0 (the sidecar was written from a clean
+  // load).
+  bool readCache(const std::filesystem::path &path, std::uint64_t sourceSize,
+                 std::uint64_t sourceMtime);
+
+  // Header of a valid sidecar: identifies the source file (size + mtime) so a
+  // changed JSONL cannot be served from a stale cache.
+  struct CacheHeader {
+    std::uint64_t source_size = 0;
+    std::uint64_t source_mtime = 0;
+    std::uint64_t count = 0;
+  };
+  bool readCacheHeader(const std::filesystem::path &path, CacheHeader &header) const;
 };
 
 } // namespace mtgcpp::core

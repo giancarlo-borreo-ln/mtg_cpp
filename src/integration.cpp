@@ -169,10 +169,12 @@ mtgcpp::core::Deck seedDeck() {
   mtgcpp::core::Deck deck;
   deck.name = "Warriors";
   deck.format = "Other";
-  deck.cards = {makeCard("Forest", "Basic Land", "263", "", 3),
-                makeCard("Mountain", "Basic Land", "261", "", 3),
-                makeCard("Grizzly Bears", "Creature - Bear", "176", "{1}{G}", 1),
-                makeCard("Lightning Bolt", "Instant", "153", "{R}", 1)};
+  // Exactly the 60-card minimum: the lobby refuses anything smaller, so the
+  // deck the driver picks must be legal to bring to the table.
+  deck.cards = {makeCard("Forest", "Basic Land", "263", "", 20),
+                makeCard("Mountain", "Basic Land", "261", "", 20),
+                makeCard("Grizzly Bears", "Creature - Bear", "176", "{1}{G}", 10),
+                makeCard("Lightning Bolt", "Instant", "153", "{R}", 10)};
   return deck;
 }
 
@@ -240,11 +242,30 @@ void flowEditorImport(mtgcpp::core::App &app) {
   click(app, center(app.deckEditor().importButton().bounds()));
   check(app.deckEditor().isImportView(), "editor: import button opens the import view");
 
-  // Paste an Arena export (Enter inserts a newline), then click Import.
+  // Paste an Arena export (Ctrl+V — the reported bug was that paste did
+  // nothing), then click Import. The clipboard reader is a seam so the driver
+  // can feed bytes without an OS clipboard / display.
   click(app, center(app.deckEditor().importArea().bounds()));
-  type(app, "2 Grizzly Bears");
-  app.injectEvent(keyDown(sf::Keyboard::Enter));
-  type(app, "1 Lightning Bolt");
+  const mtgcpp::core::ClipboardReader previous = mtgcpp::core::clipboardReader();
+  mtgcpp::core::clipboardReader() = [] { return sf::String("2 Grizzly Bears\n1 Lightning Bolt"); };
+  struct RestoreClipboard {
+    explicit RestoreClipboard(mtgcpp::core::ClipboardReader r) : saved(std::move(r)) {}
+    mtgcpp::core::ClipboardReader saved;
+    ~RestoreClipboard() { mtgcpp::core::clipboardReader() = saved; }
+    RestoreClipboard(const RestoreClipboard &) = delete;
+    RestoreClipboard &operator=(const RestoreClipboard &) = delete;
+    RestoreClipboard(RestoreClipboard &&) = delete;
+    RestoreClipboard &operator=(RestoreClipboard &&) = delete;
+  } restoreClipboard{previous};
+  sf::Event paste;
+  paste.type = sf::Event::KeyPressed;
+  paste.key.code = sf::Keyboard::V;
+  paste.key.control = true;
+  app.injectEvent(paste);
+  app.pump();
+  check(app.deckEditor().importArea().text() == "2 Grizzly Bears\n1 Lightning Bolt",
+        "editor: Ctrl+V pastes into the import area");
+
   click(app, center(app.deckEditor().importButton().bounds()));
   check(app.deckEditor().preview().has_value(), "editor: import parses into a preview");
 
@@ -306,9 +327,9 @@ void flowLobbyToTable(mtgcpp::core::App &app, const mtgcpp::core::Deck &deck) {
     return;
   }
 
-  // The table laid out the full window (960x600, margin 8) — recompute the
+  // The table laid out the full window (1280x800, margin 8) — recompute the
   // host's arched hand strip the same way the screen did.
-  const sf::Vector2u win{960u, 600u};
+  const sf::Vector2u win{1280u, 800u};
   const float margin = mtgcpp::core::px(8.f, win);
   const sf::FloatRect content{margin, margin, static_cast<float>(win.x) - (2.f * margin),
                               static_cast<float>(win.y) - (2.f * margin)};
@@ -358,6 +379,34 @@ void flowLobbyToTable(mtgcpp::core::App &app, const mtgcpp::core::Deck &deck) {
         "table: the life edit mirrors to the guest");
 }
 
+void flowSandbox(mtgcpp::core::App &app) {
+  using mtgcpp::core::PlayerSeat;
+
+  // The prior flow left a live room at the table; leave it (the table's Leave
+  // stops the session and returns to the lobby's connect panel).
+  click(app, center(app.table().leaveButton().bounds()));
+  check(app.currentScreen() == mtgcpp::core::Screen::Lobby, "sandbox: leave returns to the lobby");
+  check(!app.sandboxActive(), "sandbox: not running after leaving the room");
+
+  // The Sandbox button opens a local-only table with no relay and no deck.
+  click(app, center(app.lobby().sandboxButton().bounds()));
+  check(app.currentScreen() == mtgcpp::core::Screen::Table, "sandbox: sandbox opens the table");
+  check(app.sandboxActive(), "sandbox: the table runs locally");
+  check(app.table().board().life.at(static_cast<std::size_t>(PlayerSeat::Host)) ==
+            mtgcpp::core::kStartingLife,
+        "sandbox: empty battlefield at starting life");
+
+  // A local action (life edit) lands on the sandbox board with no peer.
+  click(app, center(app.table().lifeRings().at(0)));
+  app.injectEvent(keyDown(sf::Keyboard::Num1));
+  app.injectEvent(keyDown(sf::Keyboard::Num7));
+  app.injectEvent(keyDown(sf::Keyboard::Enter));
+  app.pump(); // the action applies to the sandbox board on this poll...
+  app.pump(); // ...and pushes back into the table screen on the next
+  check(app.table().board().life.at(static_cast<std::size_t>(PlayerSeat::Host)) == 17,
+        "sandbox: life edit applies locally");
+}
+
 } // namespace
 
 int main() {
@@ -374,6 +423,7 @@ int main() {
     flowEditorBuildAndSave(app);
     flowEditorImport(app);
     flowLobbyToTable(app, warriors);
+    flowSandbox(app);
   } catch (const std::exception &exc) {
     check(false, "unexpected exception");
     std::cout << "  what: " << exc.what() << "\n";

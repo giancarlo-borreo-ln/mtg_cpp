@@ -10,29 +10,28 @@
 // The client is single-use: `connect` once, `disconnect` when done (idempotent
 // and reconnection-safe — it joins the read thread so nothing outlives the
 // object).
+//
+// Phase 1 pImpl: every asio type lives in `Impl` (defined in the .cpp), so this
+// header pulls only the standard library. That keeps the engine's public
+// surface (state/session.h -> net/client.h) free of <asio.hpp>.
 #pragma once
 
-#include "net/envelope.h"
-#include "net/message_queue.h"
-
-#include <asio.hpp>
-
-#include <array>
-#include <atomic>
 #include <chrono>
-#include <cstddef>
-#include <deque>
+#include <memory>
 #include <optional>
 #include <string>
 #include <string_view>
-#include <thread>
 
 namespace mtgcpp::net {
 
+// Defined in net/envelope.h (internal); forward-declared here so the header
+// stays nlohmann-free.
+struct WsEnvelope;
+
 class Client {
 public:
-  Client() : socket_(ioContext_) {}
-  ~Client() { disconnect(); }
+  Client();
+  ~Client();
 
   Client(const Client &) = delete;
   Client &operator=(const Client &) = delete;
@@ -48,42 +47,22 @@ public:
 
   // True while the socket is connected and the read loop is running. Set false
   // when the peer closes the connection or the client is disconnected.
-  bool connected() const { return connected_.load(); }
+  bool connected() const;
 
   // Send one unframed message (framing applied here). Returns false when not
   // connected or the message exceeds the max frame size.
   bool send(std::string_view frame);
 
   // Convenience: serialize + send an envelope.
-  bool sendEnvelope(const WsEnvelope &envelope) { return send(serializeEnvelope(envelope)); }
+  bool sendEnvelope(const WsEnvelope &envelope);
 
   // Block up to `timeout` for the next inbound frame; nullopt on timeout.
   // Also returns nullopt once disconnected (the queue just stops producing).
-  std::optional<std::string> receive(std::chrono::milliseconds timeout) {
-    return inbound_.popFor(timeout);
-  }
+  std::optional<std::string> receive(std::chrono::milliseconds timeout);
 
 private:
-  void doRead();
-  void queueWrite(std::string frame);
-  void startWrite();
-  void onWrite(const asio::error_code &ec, std::size_t bytesWritten);
-  void onRead(const asio::error_code &ec, std::size_t bytesRead);
-
-  asio::io_context ioContext_;
-  asio::ip::tcp::socket socket_;
-  std::thread thread_;
-  FrameDecoder decoder_;
-  std::array<char, 4096> readBuffer_{};
-  std::deque<std::string> pending_;
-  std::string frame_;
-  bool writing_ = false;
-  // Set before an intentional close so the read error does not synthesize a
-  // `connection_lost` frame. Atomic: written by disconnect() (any thread) and
-  // read by the io thread inside onRead, so TSan sees a synchronized flag.
-  std::atomic<bool> closingIntentionally_ = false;
-  MessageQueue<std::string> inbound_{64};
-  std::atomic<bool> connected_ = false;
+  struct Impl;
+  std::unique_ptr<Impl> impl_;
 };
 
 } // namespace mtgcpp::net

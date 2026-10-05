@@ -18,6 +18,7 @@ set(CMAKE_EXPORT_COMPILE_COMMANDS ON)
 option(MTG_CPP_BUILD_TESTS       "Build the unit test suite" ON)
 option(MTG_CPP_ENABLE_SANITIZERS "Build with AddressSanitizer + UBSan (Linux, GCC/Clang)" OFF)
 option(MTG_CPP_ENABLE_TSAN       "Build with ThreadSanitizer (Linux, GCC/Clang; exclusive of ASan/UBSan)" OFF)
+option(MTG_CPP_HIDDEN_VISIBILITY "Build mtg_cpp_engine with hidden symbol visibility + explicit MTG_CPP_EXPORT" OFF)
 
 set(MTG_CPP_SFML_DIR "" CACHE PATH
   "Path to a prebuilt SFML (the directory containing lib/cmake/SFML). \
@@ -130,9 +131,12 @@ if(MTG_CPP_BUILD_TESTS AND NOT BUILD_TESTING)
 endif()
 
 # ---------------------------------------------------------------------------
-# Core domain library
+# Engine libraries (core + net + state), built as OBJECT libraries so the same
+# translation units feed the single shared engine library without being
+# compiled twice. The layered names survive as compile/link groupings; the
+# public artifact is the merged `mtg_cpp_engine` shared library below.
 # ---------------------------------------------------------------------------
-add_library(mtg_cpp_core
+add_library(mtg_cpp_core OBJECT
   src/core/card.cpp
   src/core/board.cpp
   src/core/deck_parser.cpp
@@ -144,6 +148,7 @@ add_library(mtg_cpp_core
   src/core/deck_editor.cpp
   src/core/import_preview.cpp
   src/core/card_serialization.cpp
+  src/core/data_paths.cpp
   src/store/deck_repository.cpp
   src/store/profile_store.cpp)
 target_include_directories(mtg_cpp_core PUBLIC src)
@@ -152,7 +157,7 @@ target_link_libraries(mtg_cpp_core PUBLIC nlohmann_json::nlohmann_json)
 # ---------------------------------------------------------------------------
 # Networking library (envelope, framing, relay server, client, transports)
 # ---------------------------------------------------------------------------
-add_library(mtg_cpp_net
+add_library(mtg_cpp_net OBJECT
   src/net/envelope.cpp
   src/net/address.cpp
   src/net/connection_manager.cpp
@@ -168,15 +173,38 @@ target_link_libraries(mtg_cpp_net PUBLIC
 # ---------------------------------------------------------------------------
 # State library (board state reducer, sync payloads, room session machine)
 # ---------------------------------------------------------------------------
-add_library(mtg_cpp_state
+add_library(mtg_cpp_state OBJECT
   src/state/board_state.cpp
   src/state/sync.cpp
   src/state/session.cpp)
 target_include_directories(mtg_cpp_state PUBLIC src)
-target_link_libraries(mtg_cpp_state PUBLIC
-  mtg_cpp_core
-  mtg_cpp_net
-  nlohmann_json::nlohmann_json)
+# Object libraries propagate only usage requirements (no object files), so
+# linking core/net here gives state their include dirs (asio, nlohmann, ...)
+# exactly as before the object-library split.
+target_link_libraries(mtg_cpp_state PUBLIC mtg_cpp_core mtg_cpp_net nlohmann_json::nlohmann_json)
+
+# ---------------------------------------------------------------------------
+# Engine shared library: the single reusable artifact the Godot GDExtension
+# (Phase 2) links against. It merges the three object libraries (no TU is
+# compiled twice) and links the engine's third-party deps into one .so/.dll.
+# ---------------------------------------------------------------------------
+add_library(mtg_cpp_engine SHARED
+  $<TARGET_OBJECTS:mtg_cpp_core>
+  $<TARGET_OBJECTS:mtg_cpp_net>
+  $<TARGET_OBJECTS:mtg_cpp_state>)
+target_include_directories(mtg_cpp_engine PUBLIC src include)
+target_link_libraries(mtg_cpp_engine PUBLIC
+  nlohmann_json::nlohmann_json
+  asio
+  Threads::Threads)
+set_target_properties(mtg_cpp_core mtg_cpp_net mtg_cpp_state PROPERTIES
+  POSITION_INDEPENDENT_CODE ON)
+if(MTG_CPP_HIDDEN_VISIBILITY)
+  set_target_properties(mtg_cpp_engine PROPERTIES
+    CXX_VISIBILITY_PRESET hidden
+    VISIBILITY_INLINES_HIDDEN ON)
+  target_compile_definitions(mtg_cpp_engine PRIVATE MTG_CPP_BUILDING_ENGINE)
+endif()
 
 # ---------------------------------------------------------------------------
 # Bundled assets (fonts, later procedural art placeholders)
@@ -195,6 +223,7 @@ add_library(mtg_cpp_ui
   src/ui/app.cpp
   src/ui/art_cache.cpp
   src/ui/widgets/button.cpp
+  src/ui/widgets/widget.cpp
   src/ui/widgets/text_input.cpp
   src/ui/widgets/list_view.cpp
   src/ui/widgets/deck_list_view.cpp
@@ -210,7 +239,7 @@ add_library(mtg_cpp_ui
   src/ui/screens/lobby_screen.cpp
   src/ui/screens/table_screen.cpp)
 target_include_directories(mtg_cpp_ui PUBLIC src)
-target_link_libraries(mtg_cpp_ui PUBLIC mtg_cpp_core mtg_cpp_state sfml-graphics sfml-window sfml-system)
+target_link_libraries(mtg_cpp_ui PUBLIC mtg_cpp_engine sfml-graphics sfml-window sfml-system)
 target_link_libraries(mtg_cpp_ui PRIVATE cpr::cpr)
 
 # ---------------------------------------------------------------------------
@@ -243,7 +272,7 @@ if(MTG_CPP_BUILD_FUZZERS)
   function(mtg_cpp_add_fuzz_target target source)
     add_executable(${target} ${source} src/fuzz/fuzz_target.cpp)
     target_include_directories(${target} PRIVATE src)
-    target_link_libraries(${target} PRIVATE mtg_cpp_core mtg_cpp_net Threads::Threads)
+    target_link_libraries(${target} PRIVATE mtg_cpp_engine Threads::Threads)
     if(MTG_CPP_HAVE_LIBFUZZER)
       target_compile_options(${target} PRIVATE -fsanitize=fuzzer,address,undefined -g -fno-omit-frame-pointer)
       target_link_options(${target} PRIVATE -fsanitize=fuzzer,address,undefined)
@@ -281,6 +310,7 @@ if(MTG_CPP_BUILD_TESTS)
       tests/core/importer_test.cpp
       tests/core/deck_editor_test.cpp
       tests/core/import_preview_test.cpp
+      tests/core/data_paths_test.cpp
       tests/store/deck_repository_test.cpp
       tests/store/profile_store_test.cpp
       tests/net/envelope_test.cpp
@@ -316,9 +346,7 @@ if(MTG_CPP_BUILD_TESTS)
     target_compile_definitions(mtg_cpp_tests PRIVATE MTG_CPP_VERSION="${PROJECT_VERSION}"
       MTG_CPP_SOURCE_DIR="${CMAKE_CURRENT_SOURCE_DIR}")
     target_link_libraries(mtg_cpp_tests PRIVATE
-      mtg_cpp_core
-      mtg_cpp_net
-      mtg_cpp_state
+      mtg_cpp_engine
       mtg_cpp_ui
       nlohmann_json::nlohmann_json
       asio
@@ -334,5 +362,12 @@ if(MTG_CPP_BUILD_TESTS)
     else()
       gtest_discover_tests(mtg_cpp_tests)
     endif()
+
+    # Engine linkage smoke test (Phase 1): links ONLY mtg_cpp_engine — no SFML,
+    # no UI — to prove the engine is a self-contained reusable library.
+    add_executable(mtg_cpp_engine_tests tests/engine/engine_smoke_test.cpp)
+    target_include_directories(mtg_cpp_engine_tests PRIVATE src include)
+    target_link_libraries(mtg_cpp_engine_tests PRIVATE mtg_cpp_engine GTest::gtest_main)
+    gtest_discover_tests(mtg_cpp_engine_tests)
   endif()
 endif()

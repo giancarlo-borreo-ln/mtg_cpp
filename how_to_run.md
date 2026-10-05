@@ -56,6 +56,13 @@ scripts/fetch_card_db.sh --refresh    # force a re-fetch even if current
 Re-running is a no-op while the file is current. `data/` is git-ignored. Without
 it the app still launches; only the Deck Editor's card search is unavailable.
 
+The **first** launch parses that file into memory and can take a few minutes
+(the terminal says so). It then writes a binary cache
+(`$XDG_DATA_HOME/mtg_cpp/card_db.cache`) so every later launch loads in a couple
+of seconds; re-fetching the database invalidates the cache automatically. A
+Release build (`cmake --build build-release`) starts noticeably faster than a
+Debug/sanitizer build.
+
 ## 4. Run
 
 ```bash
@@ -108,6 +115,7 @@ The host must be reachable at the shared `IP:PORT`:
 | Thing | Location |
 | --- | --- |
 | Card database + provenance | `<install>/data/` (`default-cards.jsonl`, `manifest.json`) |
+| Card DB startup cache (binary) | `$XDG_DATA_HOME/mtg_cpp/card_db.cache` (Linux) / `%APPDATA%\mtg_cpp\card_db.cache` (Windows) |
 | Runtime art cache (M10.1) | `$XDG_DATA_HOME/mtg_cpp/art_cache/` (Linux) / `%APPDATA%\mtg_cpp\art_cache` (Windows) |
 | Saved decks + player profile | `$XDG_DATA_HOME/mtg_cpp/decks/`, `profile.json` (Linux) / `%APPDATA%\mtg_cpp\…` (Windows) |
 | Bundled fonts + icon | `<install>/assets/` |
@@ -146,6 +154,11 @@ GCC the same binary runs a fixed-budget mutation driver.
 
 - **No card search in the Deck Editor** — `data/default-cards.jsonl` is missing;
   run `scripts/fetch_card_db.sh`.
+- **First launch is slow** — the ~600 MB JSONL is parsed once (~2–3 min, the
+  terminal says so); a binary cache then makes every later launch fast. Delete
+  `card_db.cache` only to force a re-parse (or re-fetch the DB, which
+  invalidates it automatically). Release builds start much faster than
+  Debug/sanitizer builds.
 - **Window opens but no text** — the bundled font is missing; the app degrades
   gracefully. `assets/fonts/` must sit next to the executable.
 - **Guest can't connect** — check the host's firewall allows the port, and that

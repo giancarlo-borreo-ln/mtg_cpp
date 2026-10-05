@@ -124,6 +124,11 @@ TEST(ClassifyZone, RoutesCreaturesToTheCreaturesZone) {
   EXPECT_EQ(classifyZone("Artifact Creature — Golem"), PlayerZone::Creatures);
 }
 
+TEST(ClassifyZone, RoutesArtifactsToTheArtifactsZone) {
+  EXPECT_EQ(classifyZone("Artifact"), PlayerZone::Artifacts);
+  EXPECT_EQ(classifyZone("Artifact — Equipment"), PlayerZone::Artifacts);
+}
+
 TEST(ClassifyZone, RoutesInstantsAndSorceriesToTheSharedSpellSpot) {
   EXPECT_EQ(classifyZone("Instant"), PlayerZone::InstantsSorceries);
   EXPECT_EQ(classifyZone("Sorcery"), PlayerZone::InstantsSorceries);
@@ -224,8 +229,8 @@ TEST(BoardConstants, HandSizeAndStartingLife) {
   EXPECT_EQ(kStartingLife, 20);
 }
 
-TEST(PlayerZone, ListsAllFiveZonesInRenderOrder) {
-  EXPECT_EQ(kPlayerZones.size(), 5u);
+TEST(PlayerZone, ListsAllSixZonesInRenderOrder) {
+  EXPECT_EQ(kPlayerZones.size(), 6u);
   EXPECT_EQ(kPlayerZoneCount, kPlayerZones.size());
 }
 
@@ -537,6 +542,7 @@ TEST(ZoneLabel, LabelsEveryZone) {
   EXPECT_EQ(zoneLabel(PlayerZone::InstantsSorceries), "Instants / Sorceries");
   EXPECT_EQ(zoneLabel(PlayerZone::Graveyard), "Graveyard");
   EXPECT_EQ(zoneLabel(PlayerZone::Exile), "Exile");
+  EXPECT_EQ(zoneLabel(PlayerZone::Artifacts), "Artifacts");
 }
 
 TEST(ZoneGridTemplateAreas, ContainsEveryZone) {
@@ -544,13 +550,13 @@ TEST(ZoneGridTemplateAreas, ContainsEveryZone) {
   for (const PlayerZone zone : kPlayerZones) {
     EXPECT_NE(areas.find(playerZoneToString(zone)), std::string::npos);
   }
-  EXPECT_NE(areas.find("\"lands lands lands\""), std::string::npos);
+  EXPECT_NE(areas.find("\"lands lands artifacts\""), std::string::npos);
 }
 
 TEST(ZoneGridTemplateAreas, IsExact) {
   EXPECT_EQ(zoneGridTemplateAreas(),
             "\"creatures creatures graveyard\" \"instants_sorceries instants_sorceries exile\" "
-            "\"lands lands lands\"");
+            "\"lands lands artifacts\"");
 }
 
 TEST(HandColumnTemplate, BuildsOneColumnPerCard) {

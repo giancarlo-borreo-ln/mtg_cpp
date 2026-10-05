@@ -1,0 +1,28 @@
+; Engine configuration file.
+; mtg_cpp — Godot shell (Phase 2). The game logic lives in the C++ engine
+; (mtg_cpp_engine), exposed here through the mtg_cpp_godot GDExtension.
+
+config_version=5
+
+[application]
+
+config/name="mtg_cpp"
+config/description="MTG VTT sandbox — Godot shell"
+run/main_scene="res://scenes/app.tscn"
+config/features=PackedStringArray("4.5")
+
+[autoload]
+
+Palette="*res://scripts/palette.gd"
+ArtCache="*res://scripts/art_cache.gd"
+AppState="*res://scripts/app_state.gd"
+UI="*res://scripts/ui.gd"
+
+[display]
+
+window/size/viewport_width=1600
+window/size/viewport_height=1000
+
+[rendering]
+
+renderer/rendering_method="gl_compatibility"

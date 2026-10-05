@@ -32,7 +32,12 @@ using namespace std::chrono_literals;
 class TempDir {
 public:
   TempDir() {
-    root_ = std::filesystem::temp_directory_path() / ("mtgcpp_art_" + std::to_string(++counter_));
+    // Unique per construction (the other test files use the same pattern):
+    // parallel ctest processes each run this code, so a shared counter would
+    // collide across processes and make the suites flaky under -j.
+    const std::string unique =
+        std::to_string(std::chrono::steady_clock::now().time_since_epoch().count());
+    root_ = std::filesystem::temp_directory_path() / ("mtgcpp_art_" + unique);
     std::filesystem::create_directories(root_);
   }
   ~TempDir() { std::filesystem::remove_all(root_); }
@@ -44,7 +49,6 @@ public:
 
 private:
   std::filesystem::path root_;
-  static inline std::atomic<int> counter_{0};
 };
 
 // Encode a solid-color image as a PNG byte buffer (the fake fetcher's payload).

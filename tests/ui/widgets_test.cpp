@@ -8,10 +8,12 @@
 #include "ui/widgets/button.h"
 #include "ui/widgets/list_view.h"
 #include "ui/widgets/text_input.h"
+#include "ui/widgets/widget.h"
 
 #include <gtest/gtest.h>
 
 #include <cstddef>
+#include <functional>
 #include <optional>
 #include <string>
 #include <vector>
@@ -286,6 +288,75 @@ TEST(TextInput, EnterWhileUnfocusedQueuesNothing) {
   enter.key.code = sf::Keyboard::Enter;
   EXPECT_FALSE(input.handleEvent(enter));
   EXPECT_FALSE(input.consumeSubmitted());
+}
+
+TEST(TextInput, DeleteErasesTheCharacterAtTheCaret) {
+  TextInput input;
+  input.setText("Hello");
+  input.setCaret(1);
+  input.eraseAtCaret();
+  EXPECT_EQ(input.text(), "Hllo");
+  EXPECT_EQ(input.caret(), 1u);
+}
+
+TEST(TextInput, HomeAndEndJumpTheCaret) {
+  TextInput input;
+  input.setText("abc");
+  input.setCaret(1);
+  input.moveCaretToStart();
+  EXPECT_EQ(input.caret(), 0u);
+  input.moveCaretToEnd();
+  EXPECT_EQ(input.caret(), 3u);
+}
+
+TEST(TextInput, CtrlVPastesTheClipboardAtTheCaret) {
+  // Inject a fake clipboard reader so paste is verifiable without a display.
+  struct Restore {
+    explicit Restore(ClipboardReader r) : saved(std::move(r)) {}
+    ClipboardReader saved;
+    ~Restore() { clipboardReader() = saved; }
+    Restore(const Restore &) = delete;
+    Restore &operator=(const Restore &) = delete;
+    Restore(Restore &&) = delete;
+    Restore &operator=(Restore &&) = delete;
+  } restore{clipboardReader()};
+  clipboardReader() = [] { return sf::String("123 456"); };
+
+  TextInput input;
+  input.setFocused(true);
+  input.setText("ab");
+  input.setCaret(1); // "a|b"
+
+  sf::Event paste{};
+  paste.type = sf::Event::KeyPressed;
+  paste.key.code = sf::Keyboard::V;
+  paste.key.control = true;
+  EXPECT_TRUE(input.handleEvent(paste));
+  EXPECT_EQ(input.text(), "a123 456b");
+  EXPECT_EQ(input.caret(), 8u); // caret advances past the pasted text
+}
+
+TEST(TextInput, CtrlVWithoutControlIsSwallowedNotPasted) {
+  struct Restore {
+    explicit Restore(ClipboardReader r) : saved(std::move(r)) {}
+    ClipboardReader saved;
+    ~Restore() { clipboardReader() = saved; }
+    Restore(const Restore &) = delete;
+    Restore &operator=(const Restore &) = delete;
+    Restore(Restore &&) = delete;
+    Restore &operator=(Restore &&) = delete;
+  } restore{clipboardReader()};
+  clipboardReader() = [] { return sf::String("xyz"); };
+
+  TextInput input;
+  input.setFocused(true);
+
+  sf::Event plainV;
+  plainV.type = sf::Event::KeyPressed;
+  plainV.key.code = sf::Keyboard::V;
+  plainV.key.control = false;
+  EXPECT_TRUE(input.handleEvent(plainV)); // consumed (focused owns the keyboard)
+  EXPECT_TRUE(input.empty());             // ...but nothing was pasted
 }
 
 // ---------------------------------------------------------------------------

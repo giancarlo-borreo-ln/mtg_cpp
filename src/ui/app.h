@@ -134,6 +134,20 @@ public:
   const LobbyScreen &lobby() const { return lobby_; }
   const TableScreen &table() const { return table_; }
 
+  // --- Sandbox (debug) ------------------------------------------------------
+  // Start a local-only, empty table (no relay, no opponent, no deck) so the
+  // battlefield can be poked at for debugging without any setup.
+  void startSandbox();
+  // True while the table is running as a local sandbox (not a real room).
+  bool sandboxActive() const { return sandboxActive_; }
+
+  // --- Fullscreen -----------------------------------------------------------
+  // Toggle between a borderless fullscreen window and the last windowed size.
+  // Recreates the window (SFML 2.6 has no runtime setStyle), so the GPU
+  // textures are released first and rebuilt on the next draw.
+  void toggleFullscreen(sf::RenderWindow &window);
+  bool fullscreen() const { return fullscreen_; }
+
 private:
   std::string windowTitle() const;
   // The event-handling logic with NO window side effects. Returns true when the
@@ -209,6 +223,16 @@ private:
   // switches to the table exactly once.
   bool lobbyStarted_ = false;
 
+  // Sandbox (debug): a local-only table with no relay/session. When active the
+  // App drives the table from this board instead of a live session.
+  bool sandboxActive_ = false;
+  state::BoardState sandboxBoard_;
+
+  // Fullscreen state: `fullscreen_` says the window is currently borderless;
+  // `windowedSize_` remembers the size to restore when leaving fullscreen.
+  bool fullscreen_ = false;
+  sf::Vector2u windowedSize_{1280u, 800u};
+
   sf::Font font_;           // regular face, body text
   sf::Font boldFont_;       // bold face, titles/buttons
   bool fontLoaded_ = false; // false = degrade gracefully, never crash
@@ -216,8 +240,8 @@ private:
   Screen screen_ = Screen::Home;
   std::string version_;
 
-  sf::Vector2u windowSize_{960u, 600u}; // current size; updated by run()/resize
-  float scale_ = 1.f;                   // height-based responsive scale
+  sf::Vector2u windowSize_{1280u, 800u}; // current size; updated by run()/resize
+  float scale_ = 1.f;                    // height-based responsive scale
 
   // The velvet playmat backdrop, rebuilt at the window size when the table is
   // shown (the table draws it full-window, replacing the menu background).
@@ -237,6 +261,11 @@ private:
   sf::Text heading_;     // current screen name, centered under the top bar
   sf::Text placeholder_; // one-line description under the heading
   sf::Text hints_;       // keyboard legend, centered in the bottom bar
+
+  // The OS window title last applied to the window. The title follows the
+  // active screen, so draw() updates it whenever it changes (the window is
+  // created once in run(); the title would otherwise be stale forever).
+  std::string lastTitle_;
 };
 
 } // namespace mtgcpp::core

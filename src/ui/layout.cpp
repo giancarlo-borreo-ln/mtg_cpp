@@ -17,7 +17,11 @@ float uiScale(sf::Vector2u size) {
   if (height <= 0.f) {
     return 1.f; // no window yet — the default design scale
   }
-  return clamp(height / kDesignHeight, 0.75f, 1.5f);
+  // The menu is authored at 600px height. Clamped to a readable range: a tiny
+  // window never crushes the menu below 0.75x, and a high-resolution monitor
+  // (1440p/4K) scales the UI up to 3x instead of pegging it at 1.5x, which used
+  // to leave menus tiny on large displays.
+  return clamp(height / kDesignHeight, 0.75f, 3.0f);
 }
 
 float px(float designLength, sf::Vector2u size) { return designLength * uiScale(size); }
@@ -160,7 +164,7 @@ sf::FloatRect tableZoneRect(const sf::FloatRect &grid, PlayerZone zone) {
   const float row = grid.height / 3.f;
   switch (zone) {
   case PlayerZone::Lands:
-    return {grid.left, grid.top + (2.f * row), grid.width, row};
+    return {grid.left, grid.top + (2.f * row), 2.f * col, row};
   case PlayerZone::Creatures:
     return {grid.left, grid.top, 2.f * col, row};
   case PlayerZone::InstantsSorceries:
@@ -169,6 +173,8 @@ sf::FloatRect tableZoneRect(const sf::FloatRect &grid, PlayerZone zone) {
     return {grid.left + (2.f * col), grid.top, col, row};
   case PlayerZone::Exile:
     return {grid.left + (2.f * col), grid.top + row, col, row};
+  case PlayerZone::Artifacts:
+    return {grid.left + (2.f * col), grid.top + (2.f * row), col, row};
   }
   // Exhaustive switch over PlayerZone; unreachable, but return a sane fallback.
   return grid;

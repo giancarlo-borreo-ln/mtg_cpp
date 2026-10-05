@@ -109,6 +109,12 @@ URL, sizes, SHA-256 of both artifacts). Re-running is a no-op while the file is
 current. `data/` is git-ignored. Card data is CC0; card *art* is not — the
 runtime art cache (Sprint 10) is for personal play and must not be redistributed.
 
+The first launch parses the ~600 MB JSONL into memory (~2–3 minutes; the app
+says so on the terminal). That parse is written to a binary sidecar cache in the
+app-data dir (`card_db.cache`), keyed to the JSONL's size + mtime, so every
+later launch loads in a couple of seconds. Re-fetching the database
+automatically invalidates the cache.
+
 ## Dependencies
 
 | Library   | Version | Purpose                          | Supplied by        |

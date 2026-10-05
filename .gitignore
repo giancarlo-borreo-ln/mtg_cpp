@@ -14,3 +14,7 @@ data/
 .vscode/
 .idea/
 *.user
+
+# Godot: generated cache + built extension binaries (godot/ extension build)
+godot/.godot/
+godot/bin/

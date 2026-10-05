@@ -53,10 +53,17 @@ public:
   void newline();
   // Remove the character just before the caret (a newline counts as one char).
   void backspace();
+  // Remove the character at the caret (the Delete key's forward delete).
+  void eraseAtCaret();
+  // Read the OS clipboard and insert its printable ASCII at the caret
+  // (newlines are kept so pasting an Arena export keeps its lines).
+  void pasteFromClipboard();
   void moveCaretLeft();
   void moveCaretRight();
   void moveCaretUp();
   void moveCaretDown();
+  void moveCaretToLineStart();
+  void moveCaretToLineEnd();
   void setCaret(std::size_t index); // clamped to the text length
   std::size_t caret() const { return caret_; }
 
@@ -84,6 +91,10 @@ private:
   std::size_t lineStartOf(std::size_t index) const;
   // The byte index just past the end of the line containing `index`.
   std::size_t lineEndOf(std::size_t index) const;
+  // The 1-based line the caret sits on.
+  std::size_t caretLine() const;
+  // Scroll the view so the caret line stays visible after a caret move.
+  void ensureCaretVisible();
 
   sf::Vector2f position_{0.f, 0.f};
   sf::Vector2f size_{0.f, 0.f};

@@ -1,0 +1,29 @@
+Deck
+4 Llanowar Elves
+4 Sazh's Chocobo
+4 Esper Origins
+2 Keen-Eyed Curator
+1 Surrak, Elusive Hunter
+4 Icetill Explorer
+3 Mightform Harmonizer
+1 Lumbering Worldwagon
+2 Shared Roots
+2 Meltstrider's Resolve
+4 Earthbender Ascension
+3 Sapling Nursery
+13 Forest
+4 Ba Sing Se
+4 Fabled Passage
+2 Demolition Field
+3 Escape Tunnel
+
+Sideboard
+1 Ghost Vacuum
+2 Meltstrider's Resolve
+1 Soul-Guide Lantern
+2 Origin of Metalbending
+2 Torpor Orb
+4 Mossborn Hydra
+1 Surrak, Elusive Hunter
+1 Leatherhead, Swamp Stalker
+1 Sapling Nursery

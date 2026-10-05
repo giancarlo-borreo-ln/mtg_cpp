@@ -39,6 +39,32 @@ void TextInput::backspace() {
   caret_ -= 1;
 }
 
+void TextInput::eraseAtCaret() {
+  if (caret_ < text_.size()) {
+    text_.erase(caret_, 1);
+  }
+}
+
+void TextInput::pasteFromClipboard() {
+  // The OS clipboard is a UTF-32 sf::String; this field is ASCII-only, so drop
+  // every codepoint outside printable ASCII (newlines become spaces).
+  const sf::String clip = clipboardReader()();
+  std::string ascii;
+  ascii.reserve(clip.getSize());
+  for (const sf::Uint32 code : clip) {
+    if (code >= 0x20 && code <= 0x7e) {
+      ascii.push_back(static_cast<char>(code));
+    }
+  }
+  if (!ascii.empty()) {
+    insert(ascii);
+  }
+}
+
+void TextInput::moveCaretToStart() { caret_ = 0; }
+
+void TextInput::moveCaretToEnd() { caret_ = text_.size(); }
+
 void TextInput::moveCaretLeft() {
   if (caret_ > 0) {
     caret_ -= 1;
@@ -93,11 +119,25 @@ bool TextInput::handleEvent(const sf::Event &event) {
     case sf::Keyboard::Backspace:
       backspace();
       break;
+    case sf::Keyboard::Delete:
+      eraseAtCaret();
+      break;
     case sf::Keyboard::Left:
       moveCaretLeft();
       break;
     case sf::Keyboard::Right:
       moveCaretRight();
+      break;
+    case sf::Keyboard::Home:
+      moveCaretToStart();
+      break;
+    case sf::Keyboard::End:
+      moveCaretToEnd();
+      break;
+    case sf::Keyboard::V:
+      if (event.key.control) {
+        pasteFromClipboard();
+      }
       break;
     case sf::Keyboard::Enter:
       submitQueued_ = true;

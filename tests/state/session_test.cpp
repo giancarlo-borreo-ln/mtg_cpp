@@ -15,6 +15,7 @@
 #include <chrono>
 #include <cstddef>
 #include <optional>
+#include <set>
 #include <string>
 #include <thread>
 #include <vector>
@@ -382,6 +383,152 @@ TEST(Session, LeaveNotifiesThePeerAndResetsTheSession) {
   EXPECT_FALSE(host.session.board().my_deck.has_value());
 
   guest.session.leave();
+  server.stop();
+}
+
+// A one-of-each-types deck so sandbox routing can be exercised per type.
+Deck deckTypes() {
+  Deck deck;
+  deck.id = "dTypes";
+  deck.name = "Types";
+  deck.cards = {card("Forest", "Basic Land — Forest", 1),
+                card("Bear", "Creature — Bear", 1),
+                card("Rock", "Artifact", 1),
+                card("Bolt", "Instant", 1),
+                card("Aura", "Enchantment — Aura", 1)};
+  return deck;
+}
+
+std::string handCardId(const Session &session, PlayerSeat seat, const std::string &name) {
+  for (const mtgcpp::core::BoardCard &card : seatOf(session, seat).hand) {
+    if (card.name == name) {
+      return card.id;
+    }
+  }
+  return "";
+}
+
+TEST(Session, SandboxStartsEmptyWithAFullLibrary) {
+  mtgcpp::net::AsioTransport transport(0);
+  mtgcpp::net::Server server(transport);
+  server.start();
+
+  Peer host;
+  const std::vector<Peer *> peers = {&host};
+  ASSERT_TRUE(host.client.connect("127.0.0.1", std::to_string(transport.localPort())));
+  // Requested before the seat is known: it must complete once the join lands.
+  host.session.chooseDeck(deckA());
+  host.session.enterSandbox();
+  ASSERT_TRUE(waitUntil([&] { return host.session.role().has_value(); }, server, peers));
+
+  EXPECT_TRUE(host.session.sandbox());
+  EXPECT_EQ(host.session.library().size(), 8u);
+  EXPECT_TRUE(seatOf(host.session, PlayerSeat::Host).hand.empty());
+  for (const std::vector<mtgcpp::core::BoardCard> &zone :
+       seatOf(host.session, PlayerSeat::Host).zones) {
+    EXPECT_TRUE(zone.empty());
+  }
+
+  host.session.leave();
+  server.stop();
+}
+
+TEST(Session, SandboxRoutesPlayedCardsByType) {
+  mtgcpp::net::AsioTransport transport(0);
+  mtgcpp::net::Server server(transport);
+  server.start();
+
+  Peer host;
+  const std::vector<Peer *> peers = {&host};
+  ASSERT_TRUE(host.client.connect("127.0.0.1", std::to_string(transport.localPort())));
+  host.session.chooseDeck(deckTypes());
+  ASSERT_TRUE(waitUntil([&] { return host.session.role().has_value(); }, server, peers));
+  host.session.enterSandbox();
+
+  for (int i = 0; i < 5; ++i) {
+    host.session.drawCard();
+  }
+  ASSERT_EQ(seatOf(host.session, PlayerSeat::Host).hand.size(), 5u);
+
+  host.session.playCard(handCardId(host.session, PlayerSeat::Host, "Forest"));
+  host.session.playCard(handCardId(host.session, PlayerSeat::Host, "Bear"));
+  host.session.playCard(handCardId(host.session, PlayerSeat::Host, "Rock"));
+  host.session.playCard(handCardId(host.session, PlayerSeat::Host, "Bolt"));
+  host.session.playCard(handCardId(host.session, PlayerSeat::Host, "Aura"));
+
+  const SeatBoard &board = seatOf(host.session, PlayerSeat::Host);
+  EXPECT_EQ(board.hand.size(), 0u);
+  EXPECT_EQ(board.zones.at(zoneIndex(PlayerZone::Lands)).size(), 1u);
+  EXPECT_EQ(board.zones.at(zoneIndex(PlayerZone::Creatures)).size(), 1u);
+  EXPECT_EQ(board.zones.at(zoneIndex(PlayerZone::Artifacts)).size(), 1u);
+  EXPECT_EQ(host.session.board().stack.size(), 2u); // instant + enchantment
+
+  host.session.leave();
+  server.stop();
+}
+
+TEST(Session, SandboxPlacesLibraryCardsDirectlyIntoPlay) {
+  mtgcpp::net::AsioTransport transport(0);
+  mtgcpp::net::Server server(transport);
+  server.start();
+
+  Peer host;
+  const std::vector<Peer *> peers = {&host};
+  ASSERT_TRUE(host.client.connect("127.0.0.1", std::to_string(transport.localPort())));
+  host.session.chooseDeck(deckTypes());
+  ASSERT_TRUE(waitUntil([&] { return host.session.role().has_value(); }, server, peers));
+  host.session.enterSandbox();
+  ASSERT_EQ(host.session.library().size(), 5u);
+
+  // Place the artifact straight from the library: it leaves the library and
+  // lands in the Artifacts pile.
+  std::string rock_id;
+  for (const mtgcpp::core::BoardCard &card : host.session.library()) {
+    if (card.name == "Rock") {
+      rock_id = card.id;
+    }
+  }
+  ASSERT_FALSE(rock_id.empty());
+  host.session.placeFromLibrary(rock_id);
+
+  EXPECT_EQ(host.session.library().size(), 4u);
+  EXPECT_EQ(
+      seatOf(host.session, PlayerSeat::Host).zones.at(zoneIndex(PlayerZone::Artifacts)).size(), 1u);
+
+  host.session.leave();
+  server.stop();
+}
+
+TEST(Session, SandboxRefillsTheLibraryWhenEmpty) {
+  mtgcpp::net::AsioTransport transport(0);
+  mtgcpp::net::Server server(transport);
+  server.start();
+
+  Peer host;
+  const std::vector<Peer *> peers = {&host};
+  ASSERT_TRUE(host.client.connect("127.0.0.1", std::to_string(transport.localPort())));
+  host.session.chooseDeck(deckA());
+  ASSERT_TRUE(waitUntil([&] { return host.session.role().has_value(); }, server, peers));
+  host.session.enterSandbox();
+
+  for (int i = 0; i < 8; ++i) {
+    host.session.drawCard();
+  }
+  EXPECT_EQ(host.session.library().size(), 0u);
+  EXPECT_EQ(seatOf(host.session, PlayerSeat::Host).hand.size(), 8u);
+
+  // Drawing past the end refills the library, so a sandbox never runs dry.
+  host.session.drawCard();
+  EXPECT_EQ(host.session.library().size(), 7u);
+  EXPECT_EQ(seatOf(host.session, PlayerSeat::Host).hand.size(), 9u);
+
+  // Every instance id is unique even after a refill.
+  std::set<std::string> ids;
+  for (const mtgcpp::core::BoardCard &card : seatOf(host.session, PlayerSeat::Host).hand) {
+    EXPECT_TRUE(ids.insert(card.id).second) << "duplicate id " << card.id;
+  }
+
+  host.session.leave();
   server.stop();
 }
 

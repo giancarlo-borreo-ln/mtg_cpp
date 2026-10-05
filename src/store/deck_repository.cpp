@@ -13,7 +13,6 @@
 #include <array>
 #include <cctype>
 #include <chrono>
-#include <cstdlib>
 #include <ctime>
 #include <filesystem>
 #include <fstream>
@@ -256,23 +255,6 @@ DeckSummary deriveSummary(const Deck &deck) {
 
 std::filesystem::path DeckRepository::filePathFor(const std::string &id) const {
   return baseDir_ / "decks" / (id + ".json");
-}
-
-std::filesystem::path defaultDataDir() {
-#ifdef _WIN32
-  if (const char *appData = std::getenv("APPDATA"); appData != nullptr && appData[0] != '\0') {
-    return std::filesystem::path(appData) / "mtg_cpp";
-  }
-  return std::filesystem::path("mtg_cpp");
-#else
-  if (const char *xdg = std::getenv("XDG_DATA_HOME"); xdg != nullptr && xdg[0] != '\0') {
-    return std::filesystem::path(xdg) / "mtg_cpp";
-  }
-  if (const char *home = std::getenv("HOME"); home != nullptr && home[0] != '\0') {
-    return std::filesystem::path(home) / ".local" / "share" / "mtg_cpp";
-  }
-  return std::filesystem::path("mtg_cpp");
-#endif
 }
 
 } // namespace mtgcpp::core

@@ -251,5 +251,61 @@ TEST(App, CursorDelegatesToTheActiveScreen) {
             CursorKind::Text);
 }
 
+TEST(App, SandboxStartsAnEmptyLocalTableAndEditsApplyLocally) {
+  TempDir dir;
+  DeckRepository repository(dir.path());
+  CardDatabase cards;
+  App app("test", repository, cards, dir.path());
+
+  EXPECT_FALSE(app.sandboxActive());
+  app.startSandbox();
+  EXPECT_TRUE(app.sandboxActive());
+  EXPECT_EQ(app.currentScreen(), Screen::Table);
+  EXPECT_EQ(app.table().board().life.at(0), kStartingLife);
+  EXPECT_TRUE(app.table().board().seats.at(0).hand.empty()); // an EMPTY battlefield
+
+  // Life editing is fully local: click the host ring, type 18, Enter.
+  const sf::FloatRect ring = app.table().lifeRings().at(0);
+  const float x = ring.left + (ring.width / 2.f);
+  const float y = ring.top + (ring.height / 2.f);
+  app.injectEvent(mouseClickAt(true, x, y));
+  app.injectEvent(mouseClickAt(false, x, y));
+  EXPECT_EQ(app.table().lifeEditingSeat(), std::optional<PlayerSeat>(PlayerSeat::Host));
+  sf::Event one;
+  one.type = sf::Event::KeyPressed;
+  one.key.code = sf::Keyboard::Num1;
+  app.injectEvent(one);
+  sf::Event eight;
+  eight.type = sf::Event::KeyPressed;
+  eight.key.code = sf::Keyboard::Num8;
+  app.injectEvent(eight);
+  sf::Event enter;
+  enter.type = sf::Event::KeyPressed;
+  enter.key.code = sf::Keyboard::Enter;
+  app.injectEvent(enter);
+  app.pump(); // the action is applied to the sandbox board on this poll...
+  app.pump(); // ...and pushed back into the table screen on the next
+  EXPECT_EQ(app.table().board().life.at(0), 18);
+  EXPECT_TRUE(app.sandboxActive()); // no session needed — it is fully local
+}
+
+TEST(App, SandboxLeaveReturnsToTheLobby) {
+  TempDir dir;
+  DeckRepository repository(dir.path());
+  CardDatabase cards;
+  App app("test", repository, cards, dir.path());
+  app.startSandbox();
+
+  const sf::FloatRect leave = app.table().leaveButton().bounds();
+  app.injectEvent(
+      mouseClickAt(true, leave.left + (leave.width / 2.f), leave.top + (leave.height / 2.f)));
+  app.injectEvent(
+      mouseClickAt(false, leave.left + (leave.width / 2.f), leave.top + (leave.height / 2.f)));
+  app.pump();
+
+  EXPECT_FALSE(app.sandboxActive());
+  EXPECT_EQ(app.currentScreen(), Screen::Lobby);
+}
+
 } // namespace
 } // namespace mtgcpp::core

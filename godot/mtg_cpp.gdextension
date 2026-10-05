@@ -1,0 +1,9 @@
+[configuration]
+
+entry_symbol = "mtg_cpp_godot_init"
+compatibility_minimum = "4.5"
+
+[libraries]
+
+linux.debug.x86_64 = "res://bin/libmtg_cpp_godot.so"
+linux.release.x86_64 = "res://bin/libmtg_cpp_godot.so"

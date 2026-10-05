@@ -16,6 +16,11 @@
 
 namespace mtgcpp::core {
 
+// Minimum deck size to enter a room (a "basic check" before the lobby lets a
+// player choose a deck to play with). Enforced at the UI layer so players see
+// the reason, and double-checked by the App before a deck is announced.
+inline constexpr int kDeckMinimumSize = 60;
+
 // Deck sections Arena exports use (lowercase wire values).
 enum class ArenaSection { Mainboard, Sideboard, Commander };
 
